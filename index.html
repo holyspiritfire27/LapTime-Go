@@ -26,6 +26,7 @@
         #btn-pause { background-color: #FF9800; color: white; display: none; }
         #btn-finish { background-color: #2196F3; color: white; display: none; }
         #btn-reset { background-color: #f44336; color: white; }
+        #btn-fullscreen { background-color: #607D8B; color: white; } /* 新增全螢幕按鈕樣式 */
         
         /* 中間：相機畫面與下載區 */
         #camera-section { height: 200px; background-color: #000; position: relative; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
@@ -65,7 +66,14 @@
         </div>
 
         <div class="setup-group">
-            <label>2. 匯入學生名單</label>
+            <label>2. 選擇攝影機鏡頭</label>
+            <select id="sel-camera">
+                <option value="">正在載入鏡頭列表...</option>
+            </select>
+        </div>
+
+        <div class="setup-group">
+            <label>3. 匯入學生名單</label>
             <span style="font-size: 0.8rem; color: #666;">請選擇 Excel 或 CSV 檔 (讀取第一行作為姓名)</span>
             <input type="file" id="file-upload" accept=".xlsx, .xls, .csv">
             <hr style="border: 0.5px solid #eee; margin: 15px 0;">
@@ -83,6 +91,7 @@
             <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
             <button id="btn-finish" class="control-btn" onclick="finishTest()">測驗完成</button>
             <button id="btn-reset" class="control-btn" onclick="resetTimer()">重設</button>
+            <button id="btn-fullscreen" class="control-btn" onclick="toggleFullScreen()">全螢幕</button>
         </div>
 
         <div id="camera-section">
@@ -107,6 +116,38 @@
         let students = []; 
         let importedNames = [];
 
+        // 網頁載入時，先取得相機權限並列出所有鏡頭
+        window.addEventListener('load', async () => {
+            const cameraSelect = document.getElementById('sel-camera');
+            try {
+                // 先要求一次影像權限，這樣瀏覽器才會給出真實的鏡頭名稱(label)
+                const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                
+                // 取得所有裝置
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = '';
+                if (videoDevices.length === 0) {
+                    cameraSelect.innerHTML = '<option value="">找不到任何攝影機</option>';
+                } else {
+                    videoDevices.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        // 如果裝置沒有名稱，給予預設名稱
+                        option.text = device.label || `攝影機 ${index + 1}`;
+                        cameraSelect.appendChild(option);
+                    });
+                }
+
+                // 取得完清單後，關閉暫時的權限串流，避免相機燈一直亮著
+                tempStream.getTracks().forEach(track => track.stop());
+            } catch (err) {
+                console.error("載入攝影機失敗:", err);
+                cameraSelect.innerHTML = '<option value="">無法存取相機，請確認瀏覽器權限</option>';
+            }
+        });
+
         // 讀取上傳的 Excel/CSV
         document.getElementById('file-upload').addEventListener('change', function(e) {
             const file = e.target.files[0];
@@ -118,7 +159,6 @@
                 const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                 const jsonData = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
                 
-                // 假設名字在第一欄 (A欄)，過濾掉空值
                 importedNames = jsonData.map(row => row[0]).filter(name => name !== undefined && String(name).trim() !== "");
                 alert(`成功載入 ${importedNames.length} 筆學生名單！\n請按最下方按鈕進入測驗。`);
             };
@@ -129,7 +169,7 @@
         function startSetup() {
             const dist = parseInt(document.getElementById('sel-distance').value);
             const track = parseInt(document.getElementById('sel-track').value);
-            targetLaps = dist / track; // 計算應跑圈數
+            targetLaps = dist / track; 
 
             let finalNames = [];
             if (importedNames.length > 0) {
@@ -144,17 +184,32 @@
                 }
             }
 
-            // 初始化學生陣列
             students = finalNames.map((name, index) => {
                 return { id: index, name: name, currentLap: 0, lapTimes: [] };
             });
 
-            // 切換畫面
             document.getElementById('setup-section').style.display = 'none';
             document.getElementById('test-section').style.display = 'flex';
             
             renderGrid();
-            initCamera(); // 進入畫面後才啟動相機
+            initCamera(); 
+        }
+
+        // --- 全螢幕邏輯 ---
+        function toggleFullScreen() {
+            const doc = window.document;
+            const docEl = doc.documentElement;
+
+            const requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+            const cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+            if (!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+                requestFullScreen.call(docEl);
+                document.getElementById('btn-fullscreen').innerText = "退出全螢幕";
+            } else {
+                cancelFullScreen.call(doc);
+                document.getElementById('btn-fullscreen').innerText = "全螢幕";
+            }
         }
 
         // --- 學生網格與點擊邏輯 ---
@@ -178,7 +233,7 @@
             let student = students[index];
             if (student.currentLap < targetLaps) {
                 student.currentLap++;
-                student.lapTimes.push(formatTime(difference)); // 紀錄當下時間
+                student.lapTimes.push(formatTime(difference)); 
                 
                 btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
                 
@@ -194,21 +249,18 @@
 
         // --- 匯出 Excel 成績單邏輯 ---
         function exportExcel() {
-            // 將內部資料轉為適合 Excel 的表格格式
             let exportData = students.map(s => {
                 let row = { 
                     "姓名": s.name, 
                     "完成圈數": `${s.currentLap} / ${targetLaps}`,
                     "總成績": s.currentLap === targetLaps ? s.lapTimes[s.lapTimes.length - 1] : "未完賽" 
                 };
-                // 加入各圈成績
                 for (let i = 0; i < targetLaps; i++) {
                     row[`第${i+1}圈`] = s.lapTimes[i] || "-";
                 }
                 return row;
             });
 
-            // 使用 SheetJS 產生 Excel 檔
             const worksheet = XLSX.utils.json_to_sheet(exportData);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "測驗成績");
@@ -222,9 +274,17 @@
         const recordingIndicator = document.getElementById('recording-indicator');
 
         async function initCamera() {
+            // 抓取設定頁面選擇的鏡頭 ID
+            const selectedDeviceId = document.getElementById('sel-camera').value;
+            
+            // 設定 Constraints，如果有指定設備就用指定的，否則退回預設環境鏡頭
+            const videoConstraints = selectedDeviceId 
+                ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+                : { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } };
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    video: videoConstraints,
                     audio: true 
                 });
                 viewfinder.srcObject = stream;
@@ -346,6 +406,12 @@
                     mediaRecorder.stop();
                     recordedChunks = [];
                     setTimeout(() => { mediaRecorder.onstop = tempOnStop; }, 500);
+                    
+                    // 釋放相機資源
+                    const stream = viewfinder.srcObject;
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop());
+                    }
                 }
 
                 // 返回設定畫面
@@ -353,6 +419,12 @@
                 document.getElementById('setup-section').style.display = 'flex';
                 importedNames = [];
                 document.getElementById('file-upload').value = '';
+                
+                // 退出全螢幕 (如果在全螢幕狀態)
+                if (document.fullscreenElement) {
+                    document.exitFullscreen();
+                    document.getElementById('btn-fullscreen').innerText = "全螢幕";
+                }
             }
         }
     </script>
