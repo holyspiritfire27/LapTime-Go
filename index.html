@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>體育測驗計時系統</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f0f0f0; }
+        /* 上半部：計時器與控制區 */
+        #top-section { padding: 20px; text-align: center; background-color: #333; color: white; flex-shrink: 0; }
+        #timer { font-size: 3rem; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 15px; }
+        button.control-btn { padding: 10px 20px; font-size: 1.2rem; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+        #btn-start { background-color: #4CAF50; color: white; }
+        #btn-pause { background-color: #FF9800; color: white; display: none; }
+        #btn-reset { background-color: #f44336; color: white; }
+        
+        /* 中間：預留給相機畫面的空間 */
+        #camera-section { height: 150px; background-color: #000; color: #777; display: flex; align-items: center; justify-content: center; border-bottom: 2px solid #ccc; flex-shrink: 0; }
+
+        /* 下半部：學生按鈕網格 (可滑動) */
+        #student-section { padding: 10px; overflow-y: auto; flex-grow: 1; }
+        #student-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; }
+        
+        /* 學生按鈕樣式與狀態 */
+        .student-btn { padding: 15px 5px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; background-color: #2196F3; color: white; transition: 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .student-btn span { display: block; font-size: 0.8rem; margin-top: 5px; opacity: 0.8; }
+        .student-btn.last-lap { background-color: #E91E63; } /* 最後一圈顯示粉紅色 */
+        .student-btn.finished { background-color: #9E9E9E; opacity: 0.7; pointer-events: none; } /* 完成顯示灰色且不可按 */
+    </style>
+</head>
+<body>
+
+    <div id="top-section">
+        <div id="timer">00:00.00</div>
+        <button id="btn-start" class="control-btn" onclick="startTimer()">開始 (Go)</button>
+        <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
+        <button id="btn-reset" class="control-btn" onclick="resetTimer()">重設</button>
+    </div>
+
+    <div id="camera-section">
+        (這裡之後會放入手機鏡頭錄影畫面)
+    </div>
+
+    <div id="student-section">
+        <div id="student-grid">
+            </div>
+    </div>
+
+    <script>
+        // --- 計時器邏輯 ---
+        let startTime, updatedTime, difference;
+        let timerInterval;
+        let isRunning = false;
+        let timeSaved = 0; // 用於暫停時紀錄時間
+
+        const timerDisplay = document.getElementById('timer');
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+
+        function formatTime(ms) {
+            let minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+            let seconds = Math.floor((ms % (1000 * 60)) / 1000);
+            let milliseconds = Math.floor((ms % 1000) / 10);
+            return (minutes < 10 ? "0" : "") + minutes + ":" + 
+                   (seconds < 10 ? "0" : "") + seconds + "." + 
+                   (milliseconds < 10 ? "0" : "") + milliseconds;
+        }
+
+        function updateTimer() {
+            updatedTime = Date.now();
+            difference = updatedTime - startTime + timeSaved;
+            timerDisplay.innerText = formatTime(difference);
+        }
+
+        function startTimer() {
+            if (!isRunning) {
+                startTime = Date.now();
+                timerInterval = setInterval(updateTimer, 10);
+                isRunning = true;
+                btnStart.style.display = "none";
+                btnPause.style.display = "inline-block";
+                btnPause.innerText = "暫停";
+            }
+        }
+
+        function pauseTimer() {
+            if (isRunning) {
+                clearInterval(timerInterval);
+                timeSaved = difference;
+                isRunning = false;
+                btnPause.innerText = "繼續";
+            } else {
+                startTimer();
+            }
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            isRunning = false;
+            timeSaved = 0;
+            timerDisplay.innerText = "00:00.00";
+            btnStart.style.display = "inline-block";
+            btnPause.style.display = "none";
+            // TODO: 重設所有學生的圈數
+            initStudents();
+        }
+
+        // --- 學生資料與網格邏輯 ---
+        const targetLaps = 8; // 假設測驗 1600m，在 200m 跑道 = 8圈
+        let students = []; // 之後會由 Excel 匯入取代
+
+        // 假資料產生器 (模擬 30 個學生)
+        function initStudents() {
+            students = [];
+            for (let i = 1; i <= 30; i++) {
+                students.push({ id: i, name: `座號 ${i}`, currentLap: 0, lapTimes: [] });
+            }
+            renderGrid();
+        }
+
+        function renderGrid() {
+            const grid = document.getElementById('student-grid');
+            grid.innerHTML = ''; // 清空網格
+            students.forEach((student, index) => {
+                let btn = document.createElement('button');
+                btn.className = 'student-btn';
+                btn.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
+                
+                // 點擊紀錄成績
+                btn.onclick = () => recordLap(index, btn);
+                grid.appendChild(btn);
+            });
+        }
+
+        function recordLap(index, btnElement) {
+            if (!isRunning) {
+                alert("請先開始計時！");
+                return;
+            }
+            let student = students[index];
+            if (student.currentLap < targetLaps) {
+                student.currentLap++;
+                student.lapTimes.push(formatTime(difference)); // 紀錄當下時間
+                
+                btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
+                
+                // 狀態改變顏色
+                if (student.currentLap === targetLaps - 1) {
+                    btnElement.classList.add('last-lap'); // 最後一圈變色
+                } else if (student.currentLap === targetLaps) {
+                    btnElement.classList.remove('last-lap');
+                    btnElement.classList.add('finished'); // 完成變色
+                    btnElement.innerHTML = `${student.name} <br><span>(完賽)</span>`;
+                }
+            }
+        }
+
+        // 頁面載入時初始化
+        window.onload = initStudents;
+    </script>
+</body>
+</html>
