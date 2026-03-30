@@ -3,67 +3,270 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>體育測驗計時系統</title>
+    <title>體育測驗計時系統 - 完整版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background-color: #f0f0f0; }
+        
+        /* ===== 設定畫面 ===== */
+        #setup-section { padding: 20px; background: white; flex-grow: 1; display: flex; flex-direction: column; gap: 15px; }
+        .setup-group { border: 1px solid #ccc; padding: 15px; border-radius: 8px; background: #fafafa; }
+        .setup-group label { display: block; margin-bottom: 10px; font-weight: bold; }
+        select, input[type="file"], textarea { width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem; box-sizing: border-box; }
+        #btn-confirm-setup { background-color: #4CAF50; color: white; padding: 15px; font-size: 1.2rem; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+
+        /* ===== 測驗畫面 (初始隱藏) ===== */
+        #test-section { display: none; flex-direction: column; height: 100vh; }
+        
         /* 上半部：計時器與控制區 */
-        #top-section { padding: 20px; text-align: center; background-color: #333; color: white; flex-shrink: 0; }
-        #timer { font-size: 3rem; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 15px; }
-        button.control-btn { padding: 10px 20px; font-size: 1.2rem; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+        #top-section { padding: 10px; text-align: center; background-color: #333; color: white; flex-shrink: 0; }
+        #timer { font-size: 2.5rem; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 5px; }
+        button.control-btn { padding: 8px 12px; font-size: 1rem; margin: 3px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
         #btn-start { background-color: #4CAF50; color: white; }
         #btn-pause { background-color: #FF9800; color: white; display: none; }
+        #btn-finish { background-color: #2196F3; color: white; display: none; }
         #btn-reset { background-color: #f44336; color: white; }
         
-        /* 中間：預留給相機畫面的空間 */
-        #camera-section { height: 150px; background-color: #000; color: #777; display: flex; align-items: center; justify-content: center; border-bottom: 2px solid #ccc; flex-shrink: 0; }
+        /* 中間：相機畫面與下載區 */
+        #camera-section { height: 200px; background-color: #000; position: relative; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #viewfinder { width: 100%; height: 100%; object-fit: cover; }
+        #recording-indicator { position: absolute; top: 10px; right: 10px; color: red; font-weight: bold; display: none; background: rgba(255,255,255,0.8); padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; }
+        
+        /* 下載按鈕區 */
+        #download-section { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; gap: 15px; }
+        .download-btn { padding: 15px 30px; text-decoration: none; border-radius: 8px; font-size: 1.2rem; font-weight: bold; color: white; border: none; cursor: pointer; text-align: center; width: 80%; box-sizing: border-box;}
+        #btn-dl-video { background-color: #E91E63; }
+        #btn-dl-excel { background-color: #4CAF50; }
 
-        /* 下半部：學生按鈕網格 (可滑動) */
+        /* 下半部：學生按鈕網格 */
         #student-section { padding: 10px; overflow-y: auto; flex-grow: 1; }
         #student-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; }
-        
-        /* 學生按鈕樣式與狀態 */
         .student-btn { padding: 15px 5px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; background-color: #2196F3; color: white; transition: 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .student-btn span { display: block; font-size: 0.8rem; margin-top: 5px; opacity: 0.8; }
-        .student-btn.last-lap { background-color: #E91E63; } /* 最後一圈顯示粉紅色 */
-        .student-btn.finished { background-color: #9E9E9E; opacity: 0.7; pointer-events: none; } /* 完成顯示灰色且不可按 */
+        .student-btn.last-lap { background-color: #E91E63; } 
+        .student-btn.finished { background-color: #9E9E9E; opacity: 0.7; pointer-events: none; } 
     </style>
 </head>
 <body>
 
-    <div id="top-section">
-        <div id="timer">00:00.00</div>
-        <button id="btn-start" class="control-btn" onclick="startTimer()">開始 (Go)</button>
-        <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
-        <button id="btn-reset" class="control-btn" onclick="resetTimer()">重設</button>
+    <div id="setup-section">
+        <h2 style="margin-top: 0;">測驗設定</h2>
+        
+        <div class="setup-group">
+            <label>1. 測驗距離與場地</label>
+            <select id="sel-distance">
+                <option value="800">800 公尺</option>
+                <option value="1600" selected>1600 公尺</option>
+            </select>
+            <select id="sel-track" style="margin-top: 10px;">
+                <option value="200" selected>200 公尺跑道</option>
+                <option value="400">400 公尺跑道</option>
+            </select>
+        </div>
+
+        <div class="setup-group">
+            <label>2. 匯入學生名單</label>
+            <span style="font-size: 0.8rem; color: #666;">請選擇 Excel 或 CSV 檔 (讀取第一行作為姓名)</span>
+            <input type="file" id="file-upload" accept=".xlsx, .xls, .csv">
+            <hr style="border: 0.5px solid #eee; margin: 15px 0;">
+            <span style="font-size: 0.8rem; color: #666;">或手動輸入 (每行一個名字)</span>
+            <textarea id="manual-names" rows="4" placeholder="王小明&#10;陳大喵&#10;林小華"></textarea>
+        </div>
+
+        <button id="btn-confirm-setup" onclick="startSetup()">確認無誤，進入測驗畫面</button>
     </div>
 
-    <div id="camera-section">
-        (這裡之後會放入手機鏡頭錄影畫面)
-    </div>
+    <div id="test-section">
+        <div id="top-section">
+            <div id="timer">00:00.00</div>
+            <button id="btn-start" class="control-btn" onclick="startTimer()">開始測驗 (Go)</button>
+            <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
+            <button id="btn-finish" class="control-btn" onclick="finishTest()">測驗完成</button>
+            <button id="btn-reset" class="control-btn" onclick="resetTimer()">重設</button>
+        </div>
 
-    <div id="student-section">
-        <div id="student-grid">
+        <div id="camera-section">
+            <video id="viewfinder" autoplay playsinline muted></video>
+            <div id="recording-indicator">⏺ 錄影中</div>
+            
+            <div id="download-section">
+                <h3 style="color: white; margin: 0;">測驗已結束</h3>
+                <a id="btn-dl-video" class="download-btn" href="#">下載錄影檔 (.mp4)</a>
+                <button id="btn-dl-excel" class="download-btn" onclick="exportExcel()">下載成績單 (.xlsx)</button>
             </div>
+        </div>
+
+        <div id="student-section">
+            <div id="student-grid"></div>
+        </div>
     </div>
 
     <script>
+        // --- 變數與設定邏輯 ---
+        let targetLaps = 8; 
+        let students = []; 
+        let importedNames = [];
+
+        // 讀取上傳的 Excel/CSV
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, {header: 1});
+                
+                // 假設名字在第一欄 (A欄)，過濾掉空值
+                importedNames = jsonData.map(row => row[0]).filter(name => name !== undefined && String(name).trim() !== "");
+                alert(`成功載入 ${importedNames.length} 筆學生名單！\n請按最下方按鈕進入測驗。`);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // 確認設定並切換畫面
+        function startSetup() {
+            const dist = parseInt(document.getElementById('sel-distance').value);
+            const track = parseInt(document.getElementById('sel-track').value);
+            targetLaps = dist / track; // 計算應跑圈數
+
+            let finalNames = [];
+            if (importedNames.length > 0) {
+                finalNames = importedNames;
+            } else {
+                const manual = document.getElementById('manual-names').value.trim();
+                if (manual) {
+                    finalNames = manual.split('\n').map(n => n.trim()).filter(n => n !== "");
+                } else {
+                    alert('請匯入檔案或手動輸入學生名單！');
+                    return;
+                }
+            }
+
+            // 初始化學生陣列
+            students = finalNames.map((name, index) => {
+                return { id: index, name: name, currentLap: 0, lapTimes: [] };
+            });
+
+            // 切換畫面
+            document.getElementById('setup-section').style.display = 'none';
+            document.getElementById('test-section').style.display = 'flex';
+            
+            renderGrid();
+            initCamera(); // 進入畫面後才啟動相機
+        }
+
+        // --- 學生網格與點擊邏輯 ---
+        function renderGrid() {
+            const grid = document.getElementById('student-grid');
+            grid.innerHTML = ''; 
+            students.forEach((student, index) => {
+                let btn = document.createElement('button');
+                btn.className = 'student-btn';
+                btn.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
+                btn.onclick = () => recordLap(index, btn);
+                grid.appendChild(btn);
+            });
+        }
+
+        function recordLap(index, btnElement) {
+            if (!isRunning) {
+                alert("請先開始錄影計時！");
+                return;
+            }
+            let student = students[index];
+            if (student.currentLap < targetLaps) {
+                student.currentLap++;
+                student.lapTimes.push(formatTime(difference)); // 紀錄當下時間
+                
+                btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
+                
+                if (student.currentLap === targetLaps - 1) {
+                    btnElement.classList.add('last-lap'); 
+                } else if (student.currentLap === targetLaps) {
+                    btnElement.classList.remove('last-lap');
+                    btnElement.classList.add('finished'); 
+                    btnElement.innerHTML = `${student.name} <br><span>(完賽)</span>`;
+                }
+            }
+        }
+
+        // --- 匯出 Excel 成績單邏輯 ---
+        function exportExcel() {
+            // 將內部資料轉為適合 Excel 的表格格式
+            let exportData = students.map(s => {
+                let row = { 
+                    "姓名": s.name, 
+                    "完成圈數": `${s.currentLap} / ${targetLaps}`,
+                    "總成績": s.currentLap === targetLaps ? s.lapTimes[s.lapTimes.length - 1] : "未完賽" 
+                };
+                // 加入各圈成績
+                for (let i = 0; i < targetLaps; i++) {
+                    row[`第${i+1}圈`] = s.lapTimes[i] || "-";
+                }
+                return row;
+            });
+
+            // 使用 SheetJS 產生 Excel 檔
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "測驗成績");
+            XLSX.writeFile(workbook, `測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}.xlsx`);
+        }
+
+        // --- 相機與錄影邏輯 ---
+        let mediaRecorder;
+        let recordedChunks = [];
+        const viewfinder = document.getElementById('viewfinder');
+        const recordingIndicator = document.getElementById('recording-indicator');
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: true 
+                });
+                viewfinder.srcObject = stream;
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = function(event) {
+                    if (event.data.size > 0) recordedChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = function() {
+                    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/mp4' });
+                    const url = URL.createObjectURL(blob);
+                    const btnDlVideo = document.getElementById('btn-dl-video');
+                    btnDlVideo.href = url;
+                    const ext = (mediaRecorder.mimeType && mediaRecorder.mimeType.includes('webm')) ? 'webm' : 'mp4';
+                    btnDlVideo.download = `測驗錄影_${new Date().getTime()}.${ext}`;
+                    
+                    document.getElementById('download-section').style.display = 'flex';
+                    recordedChunks = []; 
+                };
+            } catch (err) {
+                console.error("相機存取失敗:", err);
+                alert("無法存取相機！確保您在 HTTPS 環境下，並已允許瀏覽器存取相機。");
+            }
+        }
+
         // --- 計時器邏輯 ---
         let startTime, updatedTime, difference;
         let timerInterval;
         let isRunning = false;
-        let timeSaved = 0; // 用於暫停時紀錄時間
+        let timeSaved = 0;
 
         const timerDisplay = document.getElementById('timer');
         const btnStart = document.getElementById('btn-start');
         const btnPause = document.getElementById('btn-pause');
+        const btnFinish = document.getElementById('btn-finish');
 
         function formatTime(ms) {
             let minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
             let seconds = Math.floor((ms % (1000 * 60)) / 1000);
             let milliseconds = Math.floor((ms % 1000) / 10);
-            return (minutes < 10 ? "0" : "") + minutes + ":" + 
-                   (seconds < 10 ? "0" : "") + seconds + "." + 
-                   (milliseconds < 10 ? "0" : "") + milliseconds;
+            return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds + "." + (milliseconds < 10 ? "0" : "") + milliseconds;
         }
 
         function updateTimer() {
@@ -77,9 +280,19 @@
                 startTime = Date.now();
                 timerInterval = setInterval(updateTimer, 10);
                 isRunning = true;
+                
                 btnStart.style.display = "none";
                 btnPause.style.display = "inline-block";
+                btnFinish.style.display = "inline-block";
                 btnPause.innerText = "暫停";
+
+                if (mediaRecorder && mediaRecorder.state === 'inactive') {
+                    mediaRecorder.start(1000); 
+                    recordingIndicator.style.display = "block";
+                } else if (mediaRecorder && mediaRecorder.state === 'paused') {
+                    mediaRecorder.resume();
+                    recordingIndicator.style.display = "block";
+                }
             }
         }
 
@@ -89,74 +302,59 @@
                 timeSaved = difference;
                 isRunning = false;
                 btnPause.innerText = "繼續";
+
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.pause();
+                    recordingIndicator.style.display = "none";
+                }
             } else {
                 startTimer();
             }
         }
 
-        function resetTimer() {
-            clearInterval(timerInterval);
-            isRunning = false;
-            timeSaved = 0;
-            timerDisplay.innerText = "00:00.00";
-            btnStart.style.display = "inline-block";
-            btnPause.style.display = "none";
-            // TODO: 重設所有學生的圈數
-            initStudents();
-        }
-
-        // --- 學生資料與網格邏輯 ---
-        const targetLaps = 8; // 假設測驗 1600m，在 200m 跑道 = 8圈
-        let students = []; // 之後會由 Excel 匯入取代
-
-        // 假資料產生器 (模擬 30 個學生)
-        function initStudents() {
-            students = [];
-            for (let i = 1; i <= 30; i++) {
-                students.push({ id: i, name: `座號 ${i}`, currentLap: 0, lapTimes: [] });
-            }
-            renderGrid();
-        }
-
-        function renderGrid() {
-            const grid = document.getElementById('student-grid');
-            grid.innerHTML = ''; // 清空網格
-            students.forEach((student, index) => {
-                let btn = document.createElement('button');
-                btn.className = 'student-btn';
-                btn.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
+        function finishTest() {
+            if (confirm("確定要結束測驗，進行結算並儲存影片嗎？")) {
+                clearInterval(timerInterval);
+                isRunning = false;
                 
-                // 點擊紀錄成績
-                btn.onclick = () => recordLap(index, btn);
-                grid.appendChild(btn);
-            });
-        }
-
-        function recordLap(index, btnElement) {
-            if (!isRunning) {
-                alert("請先開始計時！");
-                return;
-            }
-            let student = students[index];
-            if (student.currentLap < targetLaps) {
-                student.currentLap++;
-                student.lapTimes.push(formatTime(difference)); // 紀錄當下時間
-                
-                btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
-                
-                // 狀態改變顏色
-                if (student.currentLap === targetLaps - 1) {
-                    btnElement.classList.add('last-lap'); // 最後一圈變色
-                } else if (student.currentLap === targetLaps) {
-                    btnElement.classList.remove('last-lap');
-                    btnElement.classList.add('finished'); // 完成變色
-                    btnElement.innerHTML = `${student.name} <br><span>(完賽)</span>`;
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                    recordingIndicator.style.display = "none";
                 }
+                
+                btnPause.style.display = "none";
+                btnFinish.style.display = "none";
             }
         }
 
-        // 頁面載入時初始化
-        window.onload = initStudents;
+        function resetTimer() {
+            if (confirm("警告：這將會清除當前所有紀錄與錄影檔，回到設定畫面。確定嗎？")) {
+                clearInterval(timerInterval);
+                isRunning = false;
+                timeSaved = 0;
+                timerDisplay.innerText = "00:00.00";
+                
+                btnStart.style.display = "inline-block";
+                btnPause.style.display = "none";
+                btnFinish.style.display = "none";
+                document.getElementById('download-section').style.display = "none";
+                recordingIndicator.style.display = "none";
+
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    let tempOnStop = mediaRecorder.onstop;
+                    mediaRecorder.onstop = null; 
+                    mediaRecorder.stop();
+                    recordedChunks = [];
+                    setTimeout(() => { mediaRecorder.onstop = tempOnStop; }, 500);
+                }
+
+                // 返回設定畫面
+                document.getElementById('test-section').style.display = 'none';
+                document.getElementById('setup-section').style.display = 'flex';
+                importedNames = [];
+                document.getElementById('file-upload').value = '';
+            }
+        }
     </script>
 </body>
 </html>
