@@ -366,7 +366,7 @@
                     
                     let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
                     // 只要音量大於基本閾值，且瞬間飆高超過底噪 50，視為大叫 GO 的爆發音
-                    let isShout = (voiceAvg > 150 && voiceAvg > bgNoise + 50);
+                    let isShout = (voiceAvg > 180 && voiceAvg > bgNoise + 50);
 
                     if ((isWhistle || isShout) && !hasStarted) { 
                         triggerFrameCount++;
