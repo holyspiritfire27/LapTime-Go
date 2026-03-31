@@ -99,7 +99,7 @@
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
                 啟用高精度哨音與語音(GO)辨識起跑<br>
-                <span style="font-size: 0.75rem; color:#666;">(極速靈敏觸發機制，支援遠距離人聲啟動)</span>
+                <span style="font-size: 0.75rem; color:#666;">(零死角全時監聽機制，支援遠距離人聲啟動)</span>
             </label>
         </div>
 
@@ -263,7 +263,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.9 (極速靈敏版) ---
+        // --- 智能聲控辨識系統 v2.10 (零死角全時監聽 + 強制釋放重啟) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -356,41 +356,44 @@
                 }
                 detectWhistle();
 
-                // 引擎 2：極限靈敏語音關鍵字辨識 (降門檻，短輪詢)
+                // 引擎 2：極限靈敏語音關鍵字辨識 (修復 Bug 1: 改回 continuous=true, buildRecognizer)
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
-                    speechRec = new SpeechRecognition();
                     
-                    // 【關鍵修正 1】：改為 false，一聽到聲音就算信心度低也立刻強制回傳，不再等待靜音
-                    speechRec.continuous = false; 
-                    speechRec.interimResults = true;
-                    speechRec.lang = 'en-US'; 
-                    
-                    // 【關鍵修正 2】：最大化候選詞範圍，將低信心度的正確字元撈出來
-                    speechRec.maxAlternatives = 5; 
+                    // 封裝建立辨識器的函數，確保每次斷線重啟都是乾淨全新的物件
+                    function buildRecognizer() {
+                        const rec = new SpeechRecognition();
+                        rec.continuous = true;      // 保持全時監聽暖機狀態，零死角
+                        rec.interimResults = true;  // 草稿階段即攔截，大幅提升靈敏度
+                        rec.lang = 'en-US'; 
+                        rec.maxAlternatives = 5;    // 同時分析5個可能字，防止 GO 被排到後面
 
-                    speechRec.onresult = (event) => {
-                        if (isRunning || hasStarted) return;
-                        for (let i = event.resultIndex; i < event.results.length; ++i) {
-                            for (let j = 0; j < event.results[i].length; ++j) {
-                                let text = event.results[i][j].transcript.trim().toLowerCase();
-                                if (/^go[.!?]?$/i.test(text)) {
-                                    hasStarted = true;
-                                    startTimer();
-                                    return;
+                        rec.onresult = (event) => {
+                            if (isRunning || hasStarted) return;
+                            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                                for (let j = 0; j < event.results[i].length; ++j) {
+                                    let text = event.results[i][j].transcript.trim().toLowerCase();
+                                    if (/^go[.!?]?$/i.test(text)) {
+                                        hasStarted = true;
+                                        startTimer();
+                                        return;
+                                    }
                                 }
                             }
-                        }
-                    };
-                    
-                    speechRec.onend = () => {
-                        // 【關鍵修正 3】：因為 continuous=false，它會一直結束。我們必須用短輪詢每 80ms 叫醒它
-                        if (isListeningForSound && !isRunning && !hasStarted) {
-                            setTimeout(() => {
+                        };
+                        
+                        rec.onend = () => {
+                            // 意外中斷時（若仍應保持監聽狀態），立即重建全新物件重啟
+                            if (isListeningForSound && !isRunning && !hasStarted) {
+                                speechRec = buildRecognizer();
                                 try { speechRec.start(); } catch(e){}
-                            }, 80);
-                        }
-                    };
+                            }
+                        };
+                        
+                        return rec;
+                    }
+
+                    speechRec = buildRecognizer();
                     speechRec.start();
                 }
 
@@ -402,14 +405,16 @@
         }
 
         function stopSoundDetection() {
-            isListeningForSound = false; // 先把旗標關掉，阻止遞迴重啟
+            isListeningForSound = false; 
             if (soundDetectionFrame) cancelAnimationFrame(soundDetectionFrame);
             if (audioContext && audioContext.state !== 'closed') {
                 audioContext.close();
             }
             if (speechRec) {
-                speechRec.onend = null; // 拔掉重啟機制
-                speechRec.stop();
+                speechRec.onend = null; 
+                // 【修復 Bug 2】: 使用 abort() 立即中止，並將物件設為 null 釋放記憶體
+                speechRec.abort(); 
+                speechRec = null;
             }
         }
 
@@ -666,12 +671,12 @@
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
 
-                // 【修復 Bug 2】：先徹底關閉舊引擎，延遲後重新啟動
+                // 【修復 Bug 2】：增加釋放時間到 500ms，確保 abort() 與 AudioContext 完全關閉
                 if (document.getElementById('chk-sound-start').checked) {
                     stopSoundDetection();
                     setTimeout(() => {
                         autoStartSoundDetection();
-                    }, 200);
+                    }, 500); 
                 }
             }
         }
