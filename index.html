@@ -23,9 +23,9 @@
         #top-section { padding: 10px; text-align: center; background-color: #333; color: white; flex-shrink: 0; }
         #timer { font-size: 2.5rem; font-weight: bold; font-variant-numeric: tabular-nums; margin-bottom: 5px; }
         button.control-btn { padding: 8px 12px; font-size: 1rem; margin: 3px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        #btn-start { background-color: #4CAF50; color: white; }
+        #btn-start { background-color: #4CAF50; color: white; transition: background-color 0.3s;}
         #btn-pause { background-color: #FF9800; color: white; display: none; }
-        #btn-zero { background-color: #9C27B0; color: white; display: none; } /* 時間歸零按鈕 */
+        #btn-zero { background-color: #9C27B0; color: white; display: none; }
         #btn-finish { background-color: #2196F3; color: white; display: none; }
         #btn-reset { background-color: #f44336; color: white; }
         #btn-fullscreen { background-color: #607D8B; color: white; }
@@ -87,6 +87,14 @@
             <hr style="border: 0.5px solid #eee; margin: 15px 0;">
             <span style="font-size: 0.8rem; color: #666;">或手動輸入 (每行一個名字)</span>
             <textarea id="manual-names" rows="3" placeholder="王小明&#10;陳大喵"></textarea>
+        </div>
+
+        <div class="setup-group">
+            <label>4. 進階設定</label>
+            <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
+                啟用聲音啟動計時 (偵測哨音或大喊「GO」自動起跑)
+            </label>
         </div>
 
         <button id="btn-confirm-setup" onclick="startSetup()">確認無誤，進入測驗</button>
@@ -196,7 +204,7 @@
         });
 
         function startSetup() {
-            // 計算應跑圈數 (無條件進位)
+            // 計算應跑圈數
             const distVal = document.getElementById('sel-distance').value;
             let dist = (distVal === 'other') ? parseInt(document.getElementById('input-custom-distance').value) : parseInt(distVal);
             
@@ -222,7 +230,6 @@
                 }
             }
 
-            // 初始化學生陣列 (加入 lastLapTimeMs 與 lastLapTimeDifference 供防呆與單圈計算)
             students = finalNames.map((name, index) => {
                 return { 
                     id: index, name: name, currentLap: 0, lapTimes: [], 
@@ -241,7 +248,76 @@
             
             renderGrid();
             initCamera(); 
+
+            // 檢查是否啟用聲音啟動
+            if (document.getElementById('chk-sound-start').checked) {
+                startSoundDetection();
+            } else {
+                // 如果沒啟用，確保按鈕為預設樣式
+                const btnStart = document.getElementById('btn-start');
+                btnStart.innerText = "開始測驗 (Go)";
+                btnStart.style.backgroundColor = "#4CAF50";
+            }
         }
+
+        // --- 音量偵測觸比起跑邏輯 ---
+        let audioContext;
+        let analyser;
+        let soundDetectionFrame;
+        let isListeningForSound = false;
+
+        async function startSoundDetection() {
+            if (isListeningForSound) return;
+            try {
+                // 要求麥克風權限
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                isListeningForSound = true;
+                const btnStart = document.getElementById('btn-start');
+                btnStart.innerText = "🎤 聽取哨音/GO中...";
+                btnStart.style.backgroundColor = "#9C27B0"; // 變成紫色提醒使用者正在監聽
+
+                function detectSound() {
+                    if (!isListeningForSound) return;
+                    analyser.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        sum += dataArray[i];
+                    }
+                    let average = sum / bufferLength;
+                    
+                    // 音量閾值設定為 90 (普通講話不會觸發，拍手/哨音/大喊很容易突破)
+                    if (average > 90 && !isRunning) { 
+                        startTimer();
+                        return; // 觸發後立刻結束偵測
+                    }
+                    soundDetectionFrame = requestAnimationFrame(detectSound);
+                }
+                detectSound();
+            } catch (err) {
+                console.error("麥克風存取失敗:", err);
+                alert("無法啟動聲音觸發 (請確認瀏覽器麥克風權限)。已切換回純手動模式。");
+                const btnStart = document.getElementById('btn-start');
+                btnStart.innerText = "開始測驗 (Go)";
+                btnStart.style.backgroundColor = "#4CAF50";
+            }
+        }
+
+        function stopSoundDetection() {
+            isListeningForSound = false;
+            if (soundDetectionFrame) cancelAnimationFrame(soundDetectionFrame);
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+            }
+        }
+
 
         // --- 介面控制邏輯 ---
         function toggleFullScreen() {
@@ -350,7 +426,7 @@
             
             if (selectedDeviceId === 'none') {
                 document.getElementById('camera-section').style.display = 'none';
-                return; // 不啟動錄影
+                return; 
             }
 
             document.getElementById('camera-section').style.display = 'flex';
@@ -385,7 +461,7 @@
 
         // --- 計時器邏輯 ---
         let startTime, updatedTime, difference = 0;
-        let timerInterval;
+        let timerAnimationId; // 更改為 requestAnimationFrame 專用 ID
         let isRunning = false;
         let timeSaved = 0;
 
@@ -402,17 +478,26 @@
             return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds + "." + (milliseconds < 10 ? "0" : "") + milliseconds;
         }
 
+        // 使用 requestAnimationFrame 達到零延遲滑順渲染
         function updateTimer() {
+            if (!isRunning) return;
             updatedTime = Date.now();
             difference = updatedTime - startTime + timeSaved;
             timerDisplay.innerText = formatTime(difference);
+            timerAnimationId = requestAnimationFrame(updateTimer);
         }
 
         function startTimer() {
             if (!isRunning) {
+                stopSoundDetection(); // 確定起跑後，關閉聲音監聽避免消耗資源
+                
                 startTime = Date.now();
-                timerInterval = setInterval(updateTimer, 10);
                 isRunning = true;
+                timerAnimationId = requestAnimationFrame(updateTimer); // 立刻開始更新畫面
+                
+                // 恢復手動按鈕樣式 (防呆，如果原本是紫色等待狀態)
+                btnStart.innerText = "開始測驗 (Go)";
+                btnStart.style.backgroundColor = "#4CAF50";
                 
                 btnStart.style.display = "none";
                 btnPause.style.display = "inline-block";
@@ -432,9 +517,9 @@
 
         function pauseTimer() {
             if (isRunning) {
-                clearInterval(timerInterval);
-                timeSaved = difference;
                 isRunning = false;
+                cancelAnimationFrame(timerAnimationId); // 暫停動畫迴圈
+                timeSaved = difference;
                 btnPause.innerText = "繼續";
 
                 if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -448,13 +533,19 @@
 
         // 時間歸零 (假起跑使用)
         function zeroTimer() {
-            if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：錄影不會中斷，將持續錄製)")) {
+            if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：碼表將暫停並等待重新開始，錄影持續進行)")) {
+                
+                // 1. 徹底停止計時器
+                isRunning = false;
+                cancelAnimationFrame(timerAnimationId);
+                
+                // 2. 數值歸零
                 startTime = Date.now();
                 timeSaved = 0;
                 difference = 0;
                 timerDisplay.innerText = "00:00.00";
                 
-                // 清空所有學生的紀錄
+                // 3. 清空所有學生的紀錄
                 students.forEach(s => {
                     s.currentLap = 0;
                     s.lapTimes = [];
@@ -463,21 +554,32 @@
                     if(s.timeoutId) clearTimeout(s.timeoutId);
                 });
                 renderGrid(); // 重新繪製按鈕
+                
+                // 4. 重置 UI 按鈕，讓老師可以重新按開始
+                btnStart.style.display = "inline-block";
+                btnPause.style.display = "none";
+                btnStart.innerText = "開始測驗 (Go)";
+                btnStart.style.backgroundColor = "#4CAF50";
+
+                // 5. 如果使用者有勾選聲音觸發，歸零後自動重新啟動監聽！
+                if (document.getElementById('chk-sound-start').checked) {
+                    startSoundDetection();
+                }
             }
         }
 
         function finishTest() {
             if (confirm("確定要結束測驗，進行結算嗎？")) {
-                clearInterval(timerInterval);
                 isRunning = false;
+                cancelAnimationFrame(timerAnimationId);
+                stopSoundDetection();
                 
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                     mediaRecorder.stop();
                     recordingIndicator.style.display = "none";
                 } else {
-                    // 若未錄影，直接顯示純 Excel 下載畫面
                     document.getElementById('download-section').style.display = 'flex';
-                    document.getElementById('btn-dl-video').style.display = 'none'; // 隱藏影片下載按鈕
+                    document.getElementById('btn-dl-video').style.display = 'none'; 
                 }
                 
                 btnPause.style.display = "none";
@@ -488,8 +590,10 @@
 
         function resetTimer() {
             if (confirm("警告：這將會清除當前所有紀錄與錄影檔，回到設定畫面。確定嗎？")) {
-                clearInterval(timerInterval);
                 isRunning = false;
+                cancelAnimationFrame(timerAnimationId);
+                stopSoundDetection(); // 返回設定時也要關閉監聽
+
                 timeSaved = 0;
                 difference = 0;
                 timerDisplay.innerText = "00:00.00";
@@ -499,7 +603,7 @@
                 btnFinish.style.display = "none";
                 btnZero.style.display = "none";
                 document.getElementById('download-section').style.display = "none";
-                document.getElementById('btn-dl-video').style.display = 'block'; // 恢復按鈕顯示
+                document.getElementById('btn-dl-video').style.display = 'block'; 
                 recordingIndicator.style.display = "none";
 
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
