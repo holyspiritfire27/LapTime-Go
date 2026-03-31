@@ -98,7 +98,7 @@
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
                 啟用終極防呆聲控 (專注捕捉 GO 聲與爆發音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(零死角精準捕捉，自動過濾「預備」，支援大聲強制觸發)</span>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(大聲強制觸發計時)</span>
             </label>
         </div>
 
@@ -366,7 +366,7 @@
                     
                     let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
                     // 只要音量大於基本閾值，且瞬間飆高超過底噪 50，視為大叫 GO 的爆發音
-                    let isShout = (voiceAvg > 70 && voiceAvg > bgNoise + 50);
+                    let isShout = (voiceAvg > 100 && voiceAvg > bgNoise + 50);
 
                     if ((isWhistle || isShout) && !hasStarted) { 
                         triggerFrameCount++;
