@@ -95,8 +95,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用哨音與語音(GO)辨識起跑<br>
-                <span style="font-size: 0.75rem; color:#666;">(自動過濾「各就位」、「預備」等人聲雜音)</span>
+                啟用高精度哨音與語音(GO)辨識起跑<br>
+                <span style="font-size: 0.75rem; color:#666;">(雙語音引擎架構，自動過濾「各就位」、「預備」雜音)</span>
             </label>
         </div>
 
@@ -249,47 +249,43 @@
             renderGrid();
             initCamera(); 
 
-            // 【更新】使用 Fallback 自動啟動機制
+            // Fallback 自動啟動機制
             if (document.getElementById('chk-sound-start').checked) {
                 autoStartSoundDetection();
             } else {
                 const btnStart = document.getElementById('btn-start');
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
-                btnStart.onclick = startTimer; // 確保按鈕綁定手動開始
+                btnStart.onclick = startTimer; 
             }
         }
 
-        // --- 智能雙引擎聲音辨識邏輯 (包含 Fallback 機制) ---
+        // --- 智能聲控辨識系統 v2.5 ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
-        let speechRec = null;
+        let speechRecEn = null; // 英文辨識器 (抓 GO)
+        let speechRecZh = null; // 中文辨識器 (抓 開始/跑)
         let isListeningForSound = false;
 
-        // Fallback 啟動管理器
         async function autoStartSoundDetection() {
             const btnStart = document.getElementById('btn-start');
             try {
-                // 嘗試直接啟動（若無事先點擊網頁，通常會被擋）
                 await startSoundDetection();
                 btnStart.innerText = "🎤 偵測哨音/GO中...";
                 btnStart.style.backgroundColor = "#9C27B0";
-                btnStart.onclick = startTimer; // 確保還是可以手動按
+                btnStart.onclick = startTimer; 
             } catch (err) {
-                // 👉 被瀏覽器擋住 (Autoplay Policy)
                 console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
-                
                 btnStart.innerText = "👉 點擊啟用聲控";
                 btnStart.style.backgroundColor = "#FF9800";
                 
-                // 綁定點擊事件進行解鎖
                 btnStart.onclick = async () => {
                     try {
                         await startSoundDetection();
                         btnStart.innerText = "🎤 聲控已解鎖 (偵測中)";
                         btnStart.style.backgroundColor = "#9C27B0";
-                        btnStart.onclick = startTimer; // 恢復正常的手動開始功能
+                        btnStart.onclick = startTimer; 
                     } catch (e) {
                         alert("無法存取麥克風，請確認瀏覽器權限！");
                         btnStart.innerText = "開始測驗 (Go)";
@@ -306,22 +302,30 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                // 👉 解鎖 audio（超重要：解決瀏覽器 suspended 狀態）
                 if (audioContext.state === 'suspended') {
                     await audioContext.resume();
                 }
 
                 isListeningForSound = true;
+                let hasStarted = false; // 防連點旗標
                 
+                // 引擎 1：高解析度頻譜分析 (抓哨音)
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
-                analyser.fftSize = 512; 
+                analyser.fftSize = 2048; // 提高頻率解析度
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
-
-                let hasStarted = false; // 防連點/重複觸發旗標
+                
+                // 動態計算對應頻率的 Bin 索引 (依據不同設備的 sampleRate)
+                const sampleRate = audioContext.sampleRate;
+                const hzPerBin = sampleRate / analyser.fftSize;
+                
+                // 人聲範圍 (約 200Hz ~ 3000Hz)，哨音範圍 (約 2000Hz ~ 4500Hz)
+                const voiceStartBin = Math.floor(200 / hzPerBin);
+                const voiceEndBin = Math.floor(3000 / hzPerBin);
+                const whistleStartBin = Math.floor(2000 / hzPerBin);
+                const whistleEndBin = Math.floor(4500 / hzPerBin);
 
                 function detectWhistle() {
                     if (!isListeningForSound) return;
@@ -330,14 +334,14 @@
                     let voiceEnergy = 0;   
                     let whistleEnergy = 0; 
 
-                    for (let i = 1; i < 12; i++) voiceEnergy += dataArray[i];      
-                    for (let i = 22; i < 45; i++) whistleEnergy += dataArray[i];   
+                    for (let i = voiceStartBin; i <= voiceEndBin; i++) voiceEnergy += dataArray[i];      
+                    for (let i = whistleStartBin; i <= whistleEndBin; i++) whistleEnergy += dataArray[i];   
 
-                    let voiceAvg = voiceEnergy / 11;
-                    let whistleAvg = whistleEnergy / 23;
+                    let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
+                    let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 哨音頻率突波判斷
-                    if (whistleAvg > 120 && whistleAvg > voiceAvg * 1.5 && !isRunning && !hasStarted) { 
+                    // 嚴格過濾：哨音能量必須顯著高於平均，且為人聲能量的 2 倍以上
+                    if (whistleAvg > 120 && whistleAvg > voiceAvg * 2.0 && !isRunning && !hasStarted) { 
                         hasStarted = true;
                         startTimer();
                         return; 
@@ -346,20 +350,21 @@
                 }
                 detectWhistle();
 
-                // 引擎 2：語音關鍵字辨識 (專門抓 GO / 開始)
+                // 引擎 2：雙語音關鍵字並行辨識 (專門抓 GO / 開始 / 跑)
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
-                    speechRec = new SpeechRecognition();
-                    speechRec.continuous = true;
-                    speechRec.interimResults = true;
-                    speechRec.lang = 'zh-TW';
+                    
+                    // -- 英文辨識器 (專抓 GO) --
+                    speechRecEn = new SpeechRecognition();
+                    speechRecEn.continuous = true;
+                    speechRecEn.interimResults = true;
+                    speechRecEn.lang = 'en-US';
 
-                    speechRec.onresult = (event) => {
+                    speechRecEn.onresult = (event) => {
                         if (isRunning || hasStarted) return;
                         for (let i = event.resultIndex; i < event.results.length; ++i) {
                             let text = event.results[i][0].transcript.trim().toLowerCase();
-                            // 增強關鍵字判斷
-                            if (text.includes('go') || text.includes('夠') || text.includes('開始') || text.includes('跑')) {
+                            if (text.includes('go')) {
                                 hasStarted = true;
                                 startTimer();
                                 return;
@@ -367,18 +372,43 @@
                         }
                     };
                     
-                    speechRec.onend = () => {
+                    speechRecEn.onend = () => {
                         if (isListeningForSound && !isRunning && !hasStarted) {
-                            try { speechRec.start(); } catch(e){}
+                            try { speechRecEn.start(); } catch(e){}
                         }
                     };
-                    speechRec.start();
+                    speechRecEn.start();
+
+                    // -- 中文辨識器 (專抓 開始/跑) --
+                    speechRecZh = new SpeechRecognition();
+                    speechRecZh.continuous = true;
+                    speechRecZh.interimResults = true;
+                    speechRecZh.lang = 'zh-TW';
+
+                    speechRecZh.onresult = (event) => {
+                        if (isRunning || hasStarted) return;
+                        for (let i = event.resultIndex; i < event.results.length; ++i) {
+                            let text = event.results[i][0].transcript.trim().toLowerCase();
+                            if (text.includes('夠') || text.includes('開始') || text.includes('跑')) {
+                                hasStarted = true;
+                                startTimer();
+                                return;
+                            }
+                        }
+                    };
+                    
+                    speechRecZh.onend = () => {
+                        if (isListeningForSound && !isRunning && !hasStarted) {
+                            try { speechRecZh.start(); } catch(e){}
+                        }
+                    };
+                    speechRecZh.start();
                 }
 
             } catch (err) {
                 console.error("麥克風啟動失敗:", err);
                 isListeningForSound = false;
-                throw err; // 🔴 關鍵：必須 throw 給外層捕捉！
+                throw err;
             }
         }
 
@@ -388,9 +418,13 @@
             if (audioContext && audioContext.state !== 'closed') {
                 audioContext.close();
             }
-            if (speechRec) {
-                speechRec.onend = null; 
-                speechRec.stop();
+            if (speechRecEn) {
+                speechRecEn.onend = null; 
+                speechRecEn.stop();
+            }
+            if (speechRecZh) {
+                speechRecZh.onend = null; 
+                speechRecZh.stop();
             }
         }
 
@@ -633,9 +667,9 @@
                 btnPause.style.display = "none";
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
-                btnStart.onclick = startTimer; // 確保按鈕綁定正常開始
+                btnStart.onclick = startTimer; 
 
-                // 重新掛載聲控機制 (若設定有勾選)
+                // 重新掛載聲控機制
                 if (document.getElementById('chk-sound-start').checked) {
                     autoStartSoundDetection();
                 }
