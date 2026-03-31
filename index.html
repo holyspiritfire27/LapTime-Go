@@ -48,7 +48,6 @@
         .student-btn span { display: block; font-size: 0.85rem; margin-top: 5px; opacity: 0.9; }
         .student-btn.last-lap { background-color: #E91E63; } 
         .student-btn.finished { background-color: #9E9E9E; pointer-events: none; } 
-        /* 讓完賽成績更明顯 */
         .student-btn.finished span { color: #FFF; font-weight: bold; font-size: 1rem; opacity: 1; }
     </style>
 </head>
@@ -98,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用高精度哨音與語音(GO)辨識起跑<br>
-                <span style="font-size: 0.75rem; color:#666;">(零死角全時監聽機制，支援遠距離人聲啟動)</span>
+                啟用極端靈敏度起跑偵測 (哨音/吼聲/語音)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(寧可誤觸絕不漏抓：支援大聲吼叫強制觸發)</span>
             </label>
         </div>
 
@@ -263,7 +262,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.10 (零死角全時監聽 + 強制釋放重啟) ---
+        // --- 智能聲控辨識系統 v2.11 (極端靈敏：爆音物理觸發 + 模糊語音攔截) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -274,8 +273,8 @@
             const btnStart = document.getElementById('btn-start');
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 偵測哨音/GO中...";
-                btnStart.style.backgroundColor = "#9C27B0";
+                btnStart.innerText = "🎤 偵測起跑指令中(極度靈敏)...";
+                btnStart.style.backgroundColor = "#E91E63"; // 改為醒目的粉紅色
                 btnStart.onclick = startTimer; 
             } catch (err) {
                 console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
@@ -286,7 +285,7 @@
                     try {
                         await startSoundDetection();
                         btnStart.innerText = "🎤 聲控已解鎖 (偵測中)";
-                        btnStart.style.backgroundColor = "#9C27B0";
+                        btnStart.style.backgroundColor = "#E91E63";
                         btnStart.onclick = startTimer; 
                     } catch (e) {
                         alert("無法存取麥克風，請確認瀏覽器權限！");
@@ -311,7 +310,7 @@
                 isListeningForSound = true;
                 let hasStarted = false; 
                 
-                // 引擎 1：哨音高精度頻譜分析
+                // 引擎 1：頻譜分析 (哨音 + 物理爆音強制觸發)
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -327,9 +326,9 @@
                 const whistleStartBin = Math.floor(2000 / hzPerBin);
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
-                let whistleFrameCount = 0; 
+                let triggerFrameCount = 0; 
 
-                function detectWhistle() {
+                function detectSoundSpike() {
                     if (!isListeningForSound) return;
                     analyser.getByteFrequencyData(dataArray);
                     
@@ -342,38 +341,47 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    if (whistleAvg > 90 && whistleAvg > voiceAvg * 2.5 && !isRunning && !hasStarted) { 
-                        whistleFrameCount++;
-                        if (whistleFrameCount >= 3) {
+                    // 【殺手鐧 1】：放寬哨音條件
+                    let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
+                    
+                    // 【殺手鐧 2】：只要人聲頻段瞬間爆出巨響 (吼叫 GO 導致破音)，直接當作起跑觸發！
+                    // (100 是一個足以過濾一般交談，但大喊時一定會突破的閾值)
+                    let isLoudShout = (voiceAvg > 100); 
+
+                    if ((isWhistle || isLoudShout) && !isRunning && !hasStarted) { 
+                        triggerFrameCount++;
+                        // 寧可誤觸，只要偵測到連續 2 幀 (約 30ms) 的巨響就觸發
+                        if (triggerFrameCount >= 2) {
                             hasStarted = true;
                             startTimer();
                             return;
                         }
                     } else {
-                        whistleFrameCount = 0; 
+                        triggerFrameCount = 0; 
                     }
-                    soundDetectionFrame = requestAnimationFrame(detectWhistle);
+                    soundDetectionFrame = requestAnimationFrame(detectSoundSpike);
                 }
-                detectWhistle();
+                detectSoundSpike();
 
-                // 引擎 2：極限靈敏語音關鍵字辨識 (修復 Bug 1: 改回 continuous=true, buildRecognizer)
+                // 引擎 2：語音關鍵字極限模糊比對
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
-                    
-                    // 封裝建立辨識器的函數，確保每次斷線重啟都是乾淨全新的物件
                     function buildRecognizer() {
                         const rec = new SpeechRecognition();
-                        rec.continuous = true;      // 保持全時監聽暖機狀態，零死角
-                        rec.interimResults = true;  // 草稿階段即攔截，大幅提升靈敏度
+                        rec.continuous = true;      
+                        rec.interimResults = true;  
                         rec.lang = 'en-US'; 
-                        rec.maxAlternatives = 5;    // 同時分析5個可能字，防止 GO 被排到後面
+                        rec.maxAlternatives = 5;    
 
                         rec.onresult = (event) => {
                             if (isRunning || hasStarted) return;
                             for (let i = event.resultIndex; i < event.results.length; ++i) {
                                 for (let j = 0; j < event.results[i].length; ++j) {
                                     let text = event.results[i][j].transcript.trim().toLowerCase();
-                                    if (/^go[.!?]?$/i.test(text)) {
+                                    
+                                    // 【殺手鐧 3】：極度寬鬆的正則表達式。只要「包含」這些音節就觸發！
+                                    // 涵蓋了破音可能被辨識成的各種發音，以及常見的中文起跑詞
+                                    if (/(go|no|yo|oh|ok|out|now|start|跑|走|狗|夠|好|開始|預備|喔|啊|呀)/i.test(text)) {
                                         hasStarted = true;
                                         startTimer();
                                         return;
@@ -383,16 +391,13 @@
                         };
                         
                         rec.onend = () => {
-                            // 意外中斷時（若仍應保持監聽狀態），立即重建全新物件重啟
                             if (isListeningForSound && !isRunning && !hasStarted) {
                                 speechRec = buildRecognizer();
                                 try { speechRec.start(); } catch(e){}
                             }
                         };
-                        
                         return rec;
                     }
-
                     speechRec = buildRecognizer();
                     speechRec.start();
                 }
@@ -412,7 +417,6 @@
             }
             if (speechRec) {
                 speechRec.onend = null; 
-                // 【修復 Bug 2】: 使用 abort() 立即中止，並將物件設為 null 釋放記憶體
                 speechRec.abort(); 
                 speechRec = null;
             }
@@ -671,7 +675,6 @@
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
 
-                // 【修復 Bug 2】：增加釋放時間到 500ms，確保 abort() 與 AudioContext 完全關閉
                 if (document.getElementById('chk-sound-start').checked) {
                     stopSoundDetection();
                     setTimeout(() => {
