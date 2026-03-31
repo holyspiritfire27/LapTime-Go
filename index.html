@@ -98,8 +98,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用麥克風輔助起跑<br>
-                <span style="font-size: 0.75rem; color:#666;">(對話音量突波 或 偵測到GO/開始 即觸發)</span>
+                啟用高精度哨音與語音(GO)辨識起跑<br>
+                <span style="font-size: 0.75rem; color:#666;">(三重濾波哨音偵測 + en-US精確語音匹配)</span>
             </label>
         </div>
 
@@ -263,7 +263,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.7 (純對話音量與單詞觸發) ---
+        // --- 智能聲控辨識系統 v2.8 (哨音頻譜分析 + en-US精確識別) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -274,7 +274,7 @@
             const btnStart = document.getElementById('btn-start');
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 等待人聲/GO啟動...";
+                btnStart.innerText = "🎤 偵測哨音/GO中...";
                 btnStart.style.backgroundColor = "#9C27B0";
                 btnStart.onclick = startTimer; 
             } catch (err) {
@@ -311,7 +311,7 @@
                 isListeningForSound = true;
                 let hasStarted = false; 
                 
-                // 引擎 1：單純音量偵測 (移除預備過濾，只要有中等音量就觸發)
+                // 引擎 1：哨音高精度頻譜分析
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -322,45 +322,63 @@
                 const sampleRate = audioContext.sampleRate;
                 const hzPerBin = sampleRate / analyser.fftSize;
                 
-                // 抓取常見人聲頻率範圍
                 const voiceStartBin = Math.floor(200 / hzPerBin);
                 const voiceEndBin = Math.floor(3000 / hzPerBin);
+                const whistleStartBin = Math.floor(2000 / hzPerBin);
+                const whistleEndBin = Math.floor(4500 / hzPerBin);
 
-                function detectVoiceSpike() {
+                let whistleFrameCount = 0; // 用於計算連續達標幀數
+
+                function detectWhistle() {
                     if (!isListeningForSound) return;
                     analyser.getByteFrequencyData(dataArray);
                     
                     let voiceEnergy = 0;   
+                    let whistleEnergy = 0; 
+
                     for (let i = voiceStartBin; i <= voiceEndBin; i++) voiceEnergy += dataArray[i];      
+                    for (let i = whistleStartBin; i <= whistleEndBin; i++) whistleEnergy += dataArray[i];   
 
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
+                    let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 【閾值大幅降低】：45 約為對著手機講話或輕聲喊叫的音量
-                    if (voiceAvg > 45 && !isRunning && !hasStarted) { 
-                        hasStarted = true;
-                        startTimer();
-                        return; 
+                    // 條件1：高頻足夠大。條件2：高頻明顯壓過低頻人聲
+                    if (whistleAvg > 90 && whistleAvg > voiceAvg * 2.5 && !isRunning && !hasStarted) { 
+                        whistleFrameCount++;
+                        // 條件3：連續 3 幀達標 (約過濾掉 50ms 內的短暫碰撞雜音)
+                        if (whistleFrameCount >= 3) {
+                            hasStarted = true;
+                            startTimer();
+                            return;
+                        }
+                    } else {
+                        whistleFrameCount = 0; // 若中斷則重新計算
                     }
-                    soundDetectionFrame = requestAnimationFrame(detectVoiceSpike);
+                    soundDetectionFrame = requestAnimationFrame(detectWhistle);
                 }
-                detectVoiceSpike();
+                detectWhistle();
 
-                // 引擎 2：語音關鍵字辨識 (備援，抓取清晰的單字)
+                // 引擎 2：純英文語音關鍵字辨識 (嚴格比對 "GO")
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     speechRec = new SpeechRecognition();
                     speechRec.continuous = true;
                     speechRec.interimResults = true;
-                    speechRec.lang = 'zh-TW'; 
+                    speechRec.lang = 'en-US'; // 強制使用英文模型
+                    speechRec.maxAlternatives = 3; // 抓取前三個候選詞，避免首選出錯
 
                     speechRec.onresult = (event) => {
                         if (isRunning || hasStarted) return;
                         for (let i = event.resultIndex; i < event.results.length; ++i) {
-                            let text = event.results[i][0].transcript.trim().toLowerCase();
-                            if (text.includes('go') || text.includes('夠') || text.includes('狗') || text.includes('購') || text.includes('開始') || text.includes('跑') || text.includes('走')) {
-                                hasStarted = true;
-                                startTimer();
-                                return;
+                            // 檢查所有的替代候選詞
+                            for (let j = 0; j < event.results[i].length; ++j) {
+                                let text = event.results[i][j].transcript.trim().toLowerCase();
+                                // 精確正則比對：只接受 go, go!, go. 等，不接受 google, ago
+                                if (/^go[.!?]?$/i.test(text)) {
+                                    hasStarted = true;
+                                    startTimer();
+                                    return;
+                                }
                             }
                         }
                     };
@@ -415,7 +433,7 @@
                 let btn = document.createElement('button');
                 btn.className = 'student-btn';
                 
-                // 狀態判斷：是否已完賽
+                // 狀態判斷：是否已完賽 (保留完賽成績顯示)
                 if (student.currentLap >= targetLaps) {
                     let finalTime = student.lapTimes[student.lapTimes.length - 1];
                     btn.innerHTML = `${student.name} <br><span>完賽: ${finalTime}</span>`;
