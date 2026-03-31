@@ -99,7 +99,7 @@
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
                 啟用高精度哨音與語音(GO)辨識起跑<br>
-                <span style="font-size: 0.75rem; color:#666;">(三重濾波哨音偵測 + en-US精確語音匹配)</span>
+                <span style="font-size: 0.75rem; color:#666;">(極速靈敏觸發機制，支援遠距離人聲啟動)</span>
             </label>
         </div>
 
@@ -263,7 +263,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.8 (哨音頻譜分析 + en-US精確識別) ---
+        // --- 智能聲控辨識系統 v2.9 (極速靈敏版) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -327,7 +327,7 @@
                 const whistleStartBin = Math.floor(2000 / hzPerBin);
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
-                let whistleFrameCount = 0; // 用於計算連續達標幀數
+                let whistleFrameCount = 0; 
 
                 function detectWhistle() {
                     if (!isListeningForSound) return;
@@ -342,38 +342,38 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 條件1：高頻足夠大。條件2：高頻明顯壓過低頻人聲
                     if (whistleAvg > 90 && whistleAvg > voiceAvg * 2.5 && !isRunning && !hasStarted) { 
                         whistleFrameCount++;
-                        // 條件3：連續 3 幀達標 (約過濾掉 50ms 內的短暫碰撞雜音)
                         if (whistleFrameCount >= 3) {
                             hasStarted = true;
                             startTimer();
                             return;
                         }
                     } else {
-                        whistleFrameCount = 0; // 若中斷則重新計算
+                        whistleFrameCount = 0; 
                     }
                     soundDetectionFrame = requestAnimationFrame(detectWhistle);
                 }
                 detectWhistle();
 
-                // 引擎 2：純英文語音關鍵字辨識 (嚴格比對 "GO")
+                // 引擎 2：極限靈敏語音關鍵字辨識 (降門檻，短輪詢)
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     speechRec = new SpeechRecognition();
-                    speechRec.continuous = true;
+                    
+                    // 【關鍵修正 1】：改為 false，一聽到聲音就算信心度低也立刻強制回傳，不再等待靜音
+                    speechRec.continuous = false; 
                     speechRec.interimResults = true;
-                    speechRec.lang = 'en-US'; // 強制使用英文模型
-                    speechRec.maxAlternatives = 3; // 抓取前三個候選詞，避免首選出錯
+                    speechRec.lang = 'en-US'; 
+                    
+                    // 【關鍵修正 2】：最大化候選詞範圍，將低信心度的正確字元撈出來
+                    speechRec.maxAlternatives = 5; 
 
                     speechRec.onresult = (event) => {
                         if (isRunning || hasStarted) return;
                         for (let i = event.resultIndex; i < event.results.length; ++i) {
-                            // 檢查所有的替代候選詞
                             for (let j = 0; j < event.results[i].length; ++j) {
                                 let text = event.results[i][j].transcript.trim().toLowerCase();
-                                // 精確正則比對：只接受 go, go!, go. 等，不接受 google, ago
                                 if (/^go[.!?]?$/i.test(text)) {
                                     hasStarted = true;
                                     startTimer();
@@ -384,8 +384,11 @@
                     };
                     
                     speechRec.onend = () => {
+                        // 【關鍵修正 3】：因為 continuous=false，它會一直結束。我們必須用短輪詢每 80ms 叫醒它
                         if (isListeningForSound && !isRunning && !hasStarted) {
-                            try { speechRec.start(); } catch(e){}
+                            setTimeout(() => {
+                                try { speechRec.start(); } catch(e){}
+                            }, 80);
                         }
                     };
                     speechRec.start();
@@ -399,13 +402,13 @@
         }
 
         function stopSoundDetection() {
-            isListeningForSound = false;
+            isListeningForSound = false; // 先把旗標關掉，阻止遞迴重啟
             if (soundDetectionFrame) cancelAnimationFrame(soundDetectionFrame);
             if (audioContext && audioContext.state !== 'closed') {
                 audioContext.close();
             }
             if (speechRec) {
-                speechRec.onend = null; 
+                speechRec.onend = null; // 拔掉重啟機制
                 speechRec.stop();
             }
         }
@@ -433,7 +436,6 @@
                 let btn = document.createElement('button');
                 btn.className = 'student-btn';
                 
-                // 狀態判斷：是否已完賽 (保留完賽成績顯示)
                 if (student.currentLap >= targetLaps) {
                     let finalTime = student.lapTimes[student.lapTimes.length - 1];
                     btn.innerHTML = `${student.name} <br><span>完賽: ${finalTime}</span>`;
@@ -478,7 +480,6 @@
             
             if (student.timeoutId) clearTimeout(student.timeoutId);
             
-            // 點擊當下閃爍單圈成績
             btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;
             
             if (student.currentLap === targetLaps - 1) {
@@ -488,7 +489,6 @@
                 btnElement.classList.add('finished'); 
             }
 
-            // 延遲後恢復顯示狀態 (包含顯示完賽總成績)
             student.timeoutId = setTimeout(() => {
                 if (student.currentLap === targetLaps) {
                     let finalTime = student.lapTimes[student.lapTimes.length - 1];
@@ -666,8 +666,12 @@
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
 
+                // 【修復 Bug 2】：先徹底關閉舊引擎，延遲後重新啟動
                 if (document.getElementById('chk-sound-start').checked) {
-                    autoStartSoundDetection();
+                    stopSoundDetection();
+                    setTimeout(() => {
+                        autoStartSoundDetection();
+                    }, 200);
                 }
             }
         }
