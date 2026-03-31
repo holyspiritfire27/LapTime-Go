@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用防干擾精準起跑偵測 (語音GO/哨音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(已排除純音量誤觸，大喊預備不會干擾)</span>
+                啟用防護型雙引擎聲控 (支援 GO/跑/哨音)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(喊GO或哨音聲控啟動)</span>
             </label>
         </div>
 
@@ -114,6 +114,7 @@
             <button id="btn-finish" class="control-btn" onclick="finishTest()">測驗完成</button>
             <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
             <button id="btn-start" class="control-btn" onclick="startTimer()">開始測驗 (Go)</button>
+            <div id="voice-debug" style="font-size: 0.95rem; color: #FFEB3B; margin-top: 8px; font-weight: bold; min-height: 1.2rem;"></div>
         </div>
 
         <div id="camera-section">
@@ -229,7 +230,7 @@
                 if (manual) {
                     finalNames = manual.split('\n').map(n => n.trim()).filter(n => n !== "");
                 } else {
-                    alert('請匯入檔案或手動輸入學生名單！');
+                    alert('請匯入檔案或手掌握入學生名單！');
                     return;
                 }
             }
@@ -237,8 +238,8 @@
             students = finalNames.map((name, index) => {
                 return { 
                     id: index, name: name, currentLap: 0, 
-                    lapTimes: [], // 用於紀錄累計時間以計算總成績
-                    lapSplitTimes: [], // 新增：用於獨立紀錄每一圈的單圈秒數
+                    lapTimes: [], 
+                    lapSplitTimes: [], 
                     lastLapTimeMs: 0, lastLapTimeDifference: 0, timeoutId: null 
                 };
             });
@@ -261,27 +262,32 @@
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
+                document.getElementById('voice-debug').innerText = "聲控功能已停用";
             }
         }
 
-        // --- 智能聲控辨識系統 v2.13 (徹底防範預備干擾) ---
-        let audioContext;
-        let analyser;
-        let soundDetectionFrame;
-        let speechRec = null; 
+        // --- 智能聲控辨識系統 v2.14 (雙引擎: 台灣中文 AI + 物理爆發音過濾) ---
         let isListeningForSound = false;
+        let audioContext = null;
+        let analyser = null;
+        let soundDetectionFrame = null;
+        let speechRec = null; 
 
         async function autoStartSoundDetection() {
             const btnStart = document.getElementById('btn-start');
+            const debugText = document.getElementById('voice-debug');
+            debugText.innerText = "啟動麥克風中...";
+            
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 等待精準GO/哨音...";
+                btnStart.innerText = "🎤 等待發令 (Go/哨音)...";
                 btnStart.style.backgroundColor = "#E91E63"; 
                 btnStart.onclick = startTimer; 
             } catch (err) {
                 console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
-                btnStart.innerText = "👉 點擊啟用聲控";
+                btnStart.innerText = "👉 點擊解鎖聲控";
                 btnStart.style.backgroundColor = "#FF9800";
+                debugText.innerText = "⚠️ 瀏覽器要求手動點擊按鈕以啟用麥克風";
                 
                 btnStart.onclick = async () => {
                     try {
@@ -293,6 +299,7 @@
                         alert("無法存取麥克風，請確認瀏覽器權限！");
                         btnStart.innerText = "開始測驗 (Go)";
                         btnStart.style.backgroundColor = "#4CAF50";
+                        debugText.innerText = "❌ 無法使用麥克風";
                         btnStart.onclick = startTimer;
                     }
                 };
@@ -301,55 +308,96 @@
 
         async function startSoundDetection() {
             if (isListeningForSound) return;
+            const debugText = document.getElementById('voice-debug');
+            
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                isListeningForSound = true;
+                let hasStarted = false; 
                 
+                // --- 引擎 1：語音關鍵字精準比對 (Web Speech API) ---
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (SpeechRecognition) {
+                    speechRec = new SpeechRecognition();
+                    speechRec.continuous = true;      
+                    speechRec.interimResults = true;  
+                    speechRec.lang = 'cmn-Hant-TW'; // 強制使用台灣中文，能更精確捕捉中文夾雜英文 GO
+
+                    speechRec.onresult = (event) => {
+                        if (isRunning || hasStarted) return;
+                        for (let i = event.resultIndex; i < event.results.length; ++i) {
+                            let text = event.results[i][0].transcript.trim().toLowerCase();
+                            
+                            // 即時顯示聽到的字，讓老師確認防干擾有在運作
+                            debugText.innerText = `聽到: "${text}"`;
+                            
+                            // 擴展容錯字庫：包含 GO 的各種諧音與起跑詞
+                            if (/(go|start|跑|走|狗|夠|購|郭|高|勾|開始|衝|動)/i.test(text)) {
+                                hasStarted = true;
+                                debugText.innerText = `🔥 語音觸發起跑: "${text}"`;
+                                startTimer();
+                                return;
+                            }
+                        }
+                    };
+                    
+                    speechRec.onend = () => {
+                        // 確保背景持續監聽
+                        if (isListeningForSound && !isRunning && !hasStarted) {
+                            setTimeout(() => { try { speechRec.start(); } catch(e){} }, 500);
+                        }
+                    };
+                    
+                    try { speechRec.start(); } catch(e){}
+                }
+
+                // --- 引擎 2：智慧物理頻譜與爆發音分析 (防備 AI 失效，並支援哨音/拍手) ---
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioContext.state === 'suspended') {
                     await audioContext.resume();
                 }
 
-                isListeningForSound = true;
-                let hasStarted = false; 
-                
-                // 引擎 1：頻譜分析 (僅保留高頻哨音觸發，移除純音量觸發)
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
-                analyser.fftSize = 2048; 
+                analyser.fftSize = 1024; 
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
                 
-                const sampleRate = audioContext.sampleRate;
-                const hzPerBin = sampleRate / analyser.fftSize;
-                
-                const voiceStartBin = Math.floor(200 / hzPerBin);
-                const voiceEndBin = Math.floor(3000 / hzPerBin);
-                const whistleStartBin = Math.floor(2000 / hzPerBin);
-                const whistleEndBin = Math.floor(4500 / hzPerBin);
-
+                let volHistory = [0, 0, 0, 0, 0]; // 記錄過去5個影格的音量 (用於計算爆發瞬間)
                 let triggerFrameCount = 0; 
+                debugText.innerText = "✅ 雙引擎聲控已就緒";
 
                 function detectSoundSpike() {
-                    if (!isListeningForSound) return;
+                    if (!isListeningForSound || isRunning || hasStarted) return;
                     analyser.getByteFrequencyData(dataArray);
                     
-                    let voiceEnergy = 0;   
-                    let whistleEnergy = 0; 
-
-                    for (let i = voiceStartBin; i <= voiceEndBin; i++) voiceEnergy += dataArray[i];      
-                    for (let i = whistleStartBin; i <= whistleEndBin; i++) whistleEnergy += dataArray[i];   
-
-                    let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
-                    let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
+                    let total = 0, highTotal = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        total += dataArray[i];
+                        if (i > bufferLength / 3) highTotal += dataArray[i]; // 高頻區段
+                    }
                     
-                    // 僅保留嚴格的高頻哨音判斷。徹底拿掉人聲音量觸發，不管喊多大聲都不會被音量觸發。
-                    let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
+                    let avg = total / bufferLength;
+                    let highAvg = highTotal / (bufferLength * 0.66);
+                    
+                    // 更新音量歷史軌跡
+                    volHistory.push(avg);
+                    if (volHistory.length > 5) volHistory.shift();
+                    
+                    // 條件 A：爆發音偵測 (瞬間從安靜變成極大聲)
+                    // 「預備」的音量是花幾百毫秒漸強的，所以 volHistory[0] 不會這麼低，完美過濾預備！
+                    // 「GO/拍手/槍聲」則是瞬間爆發，符合此條件。
+                    let isExplosive = (volHistory[0] < 45 && avg > 85);
+                    
+                    // 條件 B：純高頻哨音偵測
+                    let isWhistle = (highAvg > 65 && avg > 60);
 
-                    if (isWhistle && !isRunning && !hasStarted) { 
+                    if (isExplosive || isWhistle) { 
                         triggerFrameCount++;
                         if (triggerFrameCount >= 2) {
                             hasStarted = true;
+                            debugText.innerText = isWhistle ? "🔥 物理觸發: 高頻哨音" : "🔥 物理觸發: 爆發音(大吼/拍手)";
                             startTimer();
                             return;
                         }
@@ -359,45 +407,6 @@
                     soundDetectionFrame = requestAnimationFrame(detectSoundSpike);
                 }
                 detectSoundSpike();
-
-                // 引擎 2：語音關鍵字精準比對
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (SpeechRecognition) {
-                    function buildRecognizer() {
-                        const rec = new SpeechRecognition();
-                        rec.continuous = true;      
-                        rec.interimResults = true;  
-                        rec.lang = 'en-US'; 
-                        rec.maxAlternatives = 5;    
-
-                        rec.onresult = (event) => {
-                            if (isRunning || hasStarted) return;
-                            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                                for (let j = 0; j < event.results[i].length; ++j) {
-                                    let text = event.results[i][j].transcript.trim().toLowerCase();
-                                    
-                                    // 徹底移除容易被「預備」發音干擾的模糊母音 (yo, oh, 啊, 呀, out, now)
-                                    // 僅保留具備爆發性、明確起跑意義的單字或相近發音
-                                    if (/(go|start|跑|走|狗|夠|購|開始|衝)/i.test(text)) {
-                                        hasStarted = true;
-                                        startTimer();
-                                        return;
-                                    }
-                                }
-                            }
-                        };
-                        
-                        rec.onend = () => {
-                            if (isListeningForSound && !isRunning && !hasStarted) {
-                                speechRec = buildRecognizer();
-                                try { speechRec.start(); } catch(e){}
-                            }
-                        };
-                        return rec;
-                    }
-                    speechRec = buildRecognizer();
-                    speechRec.start();
-                }
 
             } catch (err) {
                 console.error("麥克風啟動失敗:", err);
@@ -415,7 +424,6 @@
             if (speechRec) {
                 speechRec.onend = null; 
                 speechRec.abort(); 
-                speechRec = null;
             }
         }
 
@@ -477,13 +485,10 @@
 
             student.currentLap++;
             
-            // 計算單圈成績
             let splitTimeMs = difference - student.lastLapTimeDifference;
             let splitTimeStr = formatTime(splitTimeMs);
             
-            // 將累計時間存入 lapTimes (供總成績使用)
             student.lapTimes.push(formatTime(difference)); 
-            // 將獨立的單圈時間存入 lapSplitTimes (供匯出 Excel 使用)
             student.lapSplitTimes.push(splitTimeStr); 
             
             student.lastLapTimeMs = now;
@@ -510,7 +515,7 @@
             }, 2500);
         }
 
-        // --- 匯出檔案邏輯 (單圈成績版) ---
+        // --- 匯出檔案邏輯 ---
         function exportExcel() {
             let exportData = students.map(s => {
                 let row = { 
@@ -519,7 +524,6 @@
                     "總成績": s.currentLap === targetLaps ? s.lapTimes[s.lapTimes.length - 1] : "未完賽" 
                 };
                 
-                // 【修改點】：匯出每個欄位的資料改為 lapSplitTimes (獨立單圈成績)
                 for (let i = 0; i < targetLaps; i++) {
                     row[`第${i+1}圈`] = s.lapSplitTimes[i] || "-";
                 }
@@ -594,6 +598,7 @@
         const btnPause = document.getElementById('btn-pause');
         const btnFinish = document.getElementById('btn-finish');
         const btnZero = document.getElementById('btn-zero');
+        const debugText = document.getElementById('voice-debug');
 
         function formatTime(ms) {
             let minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
@@ -613,6 +618,7 @@
         function startTimer() {
             if (!isRunning) {
                 stopSoundDetection(); 
+                if(!debugText.innerText.includes("觸發")) debugText.innerText = "測驗進行中...";
                 
                 startTime = Date.now();
                 isRunning = true;
@@ -663,11 +669,12 @@
                 timeSaved = 0;
                 difference = 0;
                 timerDisplay.innerText = "00:00.00";
+                debugText.innerText = "";
                 
                 students.forEach(s => {
                     s.currentLap = 0;
                     s.lapTimes = [];
-                    s.lapSplitTimes = []; // 清空單圈紀錄
+                    s.lapSplitTimes = []; 
                     s.lastLapTimeMs = 0;
                     s.lastLapTimeDifference = 0;
                     if(s.timeoutId) clearTimeout(s.timeoutId);
@@ -694,6 +701,7 @@
                 isRunning = false;
                 cancelAnimationFrame(timerAnimationId);
                 stopSoundDetection();
+                debugText.innerText = "測驗已結束";
                 
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                     mediaRecorder.stop();
@@ -718,6 +726,7 @@
                 timeSaved = 0;
                 difference = 0;
                 timerDisplay.innerText = "00:00.00";
+                debugText.innerText = "";
                 
                 btnStart.style.display = "inline-block";
                 btnPause.style.display = "none";
