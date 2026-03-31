@@ -345,7 +345,7 @@
                     
                     // 【修正點 1】：將爆音閾值從 100 提高到 135
                     // 一般講話或喊「預備」不會超過這個值，必須是宏亮的吼聲才會突破
-                    let isLoudShout = (voiceAvg > 135); 
+                    let isLoudShout = (voiceAvg > 150); 
 
                     if ((isWhistle || isLoudShout) && !isRunning && !hasStarted) { 
                         triggerFrameCount++;
