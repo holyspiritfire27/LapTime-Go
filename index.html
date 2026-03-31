@@ -249,34 +249,71 @@
             renderGrid();
             initCamera(); 
 
+            // 【更新】使用 Fallback 自動啟動機制
             if (document.getElementById('chk-sound-start').checked) {
-                startSoundDetection();
+                autoStartSoundDetection();
             } else {
                 const btnStart = document.getElementById('btn-start');
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
+                btnStart.onclick = startTimer; // 確保按鈕綁定手動開始
             }
         }
 
-        // --- 智能雙引擎聲音辨識邏輯 (頻譜哨音 + 語音關鍵字) ---
+        // --- 智能雙引擎聲音辨識邏輯 (包含 Fallback 機制) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
         let speechRec = null;
         let isListeningForSound = false;
 
+        // Fallback 啟動管理器
+        async function autoStartSoundDetection() {
+            const btnStart = document.getElementById('btn-start');
+            try {
+                // 嘗試直接啟動（若無事先點擊網頁，通常會被擋）
+                await startSoundDetection();
+                btnStart.innerText = "🎤 偵測哨音/GO中...";
+                btnStart.style.backgroundColor = "#9C27B0";
+                btnStart.onclick = startTimer; // 確保還是可以手動按
+            } catch (err) {
+                // 👉 被瀏覽器擋住 (Autoplay Policy)
+                console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
+                
+                btnStart.innerText = "👉 點擊啟用聲控";
+                btnStart.style.backgroundColor = "#FF9800";
+                
+                // 綁定點擊事件進行解鎖
+                btnStart.onclick = async () => {
+                    try {
+                        await startSoundDetection();
+                        btnStart.innerText = "🎤 聲控已解鎖 (偵測中)";
+                        btnStart.style.backgroundColor = "#9C27B0";
+                        btnStart.onclick = startTimer; // 恢復正常的手動開始功能
+                    } catch (e) {
+                        alert("無法存取麥克風，請確認瀏覽器權限！");
+                        btnStart.innerText = "開始測驗 (Go)";
+                        btnStart.style.backgroundColor = "#4CAF50";
+                        btnStart.onclick = startTimer;
+                    }
+                };
+            }
+        }
+
         async function startSoundDetection() {
             if (isListeningForSound) return;
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 👉 解鎖 audio（超重要：解決瀏覽器 suspended 狀態）
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
                 isListeningForSound = true;
                 
-                const btnStart = document.getElementById('btn-start');
-                btnStart.innerText = "🎤 偵測哨音/GO中...";
-                btnStart.style.backgroundColor = "#9C27B0"; 
-
-                // 引擎 1：頻譜分析 (專門抓哨音，忽略一般人聲)
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -284,22 +321,24 @@
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
 
+                let hasStarted = false; // 防連點/重複觸發旗標
+
                 function detectWhistle() {
                     if (!isListeningForSound) return;
                     analyser.getByteFrequencyData(dataArray);
                     
-                    let voiceEnergy = 0;   // 低頻 (人聲主要分佈)
-                    let whistleEnergy = 0; // 高頻 (哨音主要分佈)
+                    let voiceEnergy = 0;   
+                    let whistleEnergy = 0; 
 
-                    // 每一個 bin 大約是 90Hz。
-                    for (let i = 1; i < 12; i++) voiceEnergy += dataArray[i];      // ~90Hz 到 ~1000Hz
-                    for (let i = 22; i < 45; i++) whistleEnergy += dataArray[i];   // ~2000Hz 到 ~4000Hz
+                    for (let i = 1; i < 12; i++) voiceEnergy += dataArray[i];      
+                    for (let i = 22; i < 45; i++) whistleEnergy += dataArray[i];   
 
                     let voiceAvg = voiceEnergy / 11;
                     let whistleAvg = whistleEnergy / 23;
                     
-                    // 如果高頻能量極強，且明顯大於低頻能量，代表是哨音而非講話大聲
-                    if (whistleAvg > 120 && whistleAvg > voiceAvg * 1.5 && !isRunning) { 
+                    // 哨音頻率突波判斷
+                    if (whistleAvg > 120 && whistleAvg > voiceAvg * 1.5 && !isRunning && !hasStarted) { 
+                        hasStarted = true;
                         startTimer();
                         return; 
                     }
@@ -316,20 +355,20 @@
                     speechRec.lang = 'zh-TW';
 
                     speechRec.onresult = (event) => {
-                        if (isRunning) return;
+                        if (isRunning || hasStarted) return;
                         for (let i = event.resultIndex; i < event.results.length; ++i) {
                             let text = event.results[i][0].transcript.trim().toLowerCase();
-                            // 只抓取特定指令，忽略各就位、預備
+                            // 增強關鍵字判斷
                             if (text.includes('go') || text.includes('夠') || text.includes('開始') || text.includes('跑')) {
+                                hasStarted = true;
                                 startTimer();
                                 return;
                             }
                         }
                     };
                     
-                    // 確保語音引擎不會自己斷線
                     speechRec.onend = () => {
-                        if (isListeningForSound && !isRunning) {
+                        if (isListeningForSound && !isRunning && !hasStarted) {
                             try { speechRec.start(); } catch(e){}
                         }
                     };
@@ -337,10 +376,9 @@
                 }
 
             } catch (err) {
-                console.error("麥克風存取失敗:", err);
-                const btnStart = document.getElementById('btn-start');
-                btnStart.innerText = "開始測驗 (Go)";
-                btnStart.style.backgroundColor = "#4CAF50";
+                console.error("麥克風啟動失敗:", err);
+                isListeningForSound = false;
+                throw err; // 🔴 關鍵：必須 throw 給外層捕捉！
             }
         }
 
@@ -412,7 +450,6 @@
             
             if (student.timeoutId) clearTimeout(student.timeoutId);
             
-            // 【優化】將顯示文字改為：第 X 圈: XX:XX.XX
             btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;
             
             if (student.currentLap === targetLaps - 1) {
@@ -428,7 +465,7 @@
                 } else {
                     btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
                 }
-            }, 2500); // 稍微延長顯示時間到2.5秒，方便老師看清楚
+            }, 2500);
         }
 
         // --- 匯出檔案邏輯 (自訂檔名) ---
@@ -448,7 +485,6 @@
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "測驗成績");
             
-            // 讀取老師輸入的自訂名稱
             let customName = document.getElementById('input-test-name').value.trim();
             let fileName = customName ? `${customName}_測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}` : `測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}`;
             
@@ -488,7 +524,6 @@
                     const btnDlVideo = document.getElementById('btn-dl-video');
                     btnDlVideo.href = url;
                     
-                    // 錄影檔也套用自訂名稱
                     const ext = (mediaRecorder.mimeType && mediaRecorder.mimeType.includes('webm')) ? 'webm' : 'mp4';
                     let customName = document.getElementById('input-test-name').value.trim();
                     let videoName = customName ? `${customName}_錄影_${new Date().getTime()}` : `測驗錄影_${new Date().getTime()}`;
@@ -593,13 +628,16 @@
                 });
                 renderGrid(); 
                 
+                // 重置狀態，準備重新起跑
                 btnStart.style.display = "inline-block";
                 btnPause.style.display = "none";
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
+                btnStart.onclick = startTimer; // 確保按鈕綁定正常開始
 
+                // 重新掛載聲控機制 (若設定有勾選)
                 if (document.getElementById('chk-sound-start').checked) {
-                    startSoundDetection();
+                    autoStartSoundDetection();
                 }
             }
         }
