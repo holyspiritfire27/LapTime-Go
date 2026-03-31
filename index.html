@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用防護型高靈敏起跑偵測 (大聲GO/哨音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(需宏亮喊出GO聲控發令)</span>
+                啟用防干擾精準起跑偵測 (語音GO/哨音)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(已排除純音量誤觸，大喊預備不會干擾)</span>
             </label>
         </div>
 
@@ -236,7 +236,9 @@
 
             students = finalNames.map((name, index) => {
                 return { 
-                    id: index, name: name, currentLap: 0, lapTimes: [], 
+                    id: index, name: name, currentLap: 0, 
+                    lapTimes: [], // 用於紀錄累計時間以計算總成績
+                    lapSplitTimes: [], // 新增：用於獨立紀錄每一圈的單圈秒數
                     lastLapTimeMs: 0, lastLapTimeDifference: 0, timeoutId: null 
                 };
             });
@@ -262,7 +264,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.12 (音量門檻提高 + 移除預備口令) ---
+        // --- 智能聲控辨識系統 v2.13 (徹底防範預備干擾) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -273,7 +275,7 @@
             const btnStart = document.getElementById('btn-start');
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 等待大聲GO/哨音...";
+                btnStart.innerText = "🎤 等待精準GO/哨音...";
                 btnStart.style.backgroundColor = "#E91E63"; 
                 btnStart.onclick = startTimer; 
             } catch (err) {
@@ -310,7 +312,7 @@
                 isListeningForSound = true;
                 let hasStarted = false; 
                 
-                // 引擎 1：頻譜分析 (哨音 + 物理爆音強制觸發)
+                // 引擎 1：頻譜分析 (僅保留高頻哨音觸發，移除純音量觸發)
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -341,13 +343,10 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
+                    // 僅保留嚴格的高頻哨音判斷。徹底拿掉人聲音量觸發，不管喊多大聲都不會被音量觸發。
                     let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
-                    
-                    // 【修正點 1】：將爆音閾值從 100 提高到 135
-                    // 一般講話或喊「預備」不會超過這個值，必須是宏亮的吼聲才會突破
-                    let isLoudShout = (voiceAvg > 150); 
 
-                    if ((isWhistle || isLoudShout) && !isRunning && !hasStarted) { 
+                    if (isWhistle && !isRunning && !hasStarted) { 
                         triggerFrameCount++;
                         if (triggerFrameCount >= 2) {
                             hasStarted = true;
@@ -361,7 +360,7 @@
                 }
                 detectSoundSpike();
 
-                // 引擎 2：語音關鍵字極限模糊比對
+                // 引擎 2：語音關鍵字精準比對
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     function buildRecognizer() {
@@ -377,9 +376,9 @@
                                 for (let j = 0; j < event.results[i].length; ++j) {
                                     let text = event.results[i][j].transcript.trim().toLowerCase();
                                     
-                                    // 【修正點 2】：移除「預備」、「好」、「ok」等準備口令
-                                    // 只留下真正的爆發性起跑指令與相近音節
-                                    if (/(go|no|yo|oh|out|now|start|跑|走|狗|夠|開始|衝|啊|呀)/i.test(text)) {
+                                    // 徹底移除容易被「預備」發音干擾的模糊母音 (yo, oh, 啊, 呀, out, now)
+                                    // 僅保留具備爆發性、明確起跑意義的單字或相近發音
+                                    if (/(go|start|跑|走|狗|夠|購|開始|衝)/i.test(text)) {
                                         hasStarted = true;
                                         startTimer();
                                         return;
@@ -477,10 +476,15 @@
             }
 
             student.currentLap++;
-            student.lapTimes.push(formatTime(difference)); 
             
+            // 計算單圈成績
             let splitTimeMs = difference - student.lastLapTimeDifference;
             let splitTimeStr = formatTime(splitTimeMs);
+            
+            // 將累計時間存入 lapTimes (供總成績使用)
+            student.lapTimes.push(formatTime(difference)); 
+            // 將獨立的單圈時間存入 lapSplitTimes (供匯出 Excel 使用)
+            student.lapSplitTimes.push(splitTimeStr); 
             
             student.lastLapTimeMs = now;
             student.lastLapTimeDifference = difference;
@@ -506,7 +510,7 @@
             }, 2500);
         }
 
-        // --- 匯出檔案邏輯 (自訂檔名) ---
+        // --- 匯出檔案邏輯 (單圈成績版) ---
         function exportExcel() {
             let exportData = students.map(s => {
                 let row = { 
@@ -514,8 +518,10 @@
                     "完成圈數": `${s.currentLap} / ${targetLaps}`,
                     "總成績": s.currentLap === targetLaps ? s.lapTimes[s.lapTimes.length - 1] : "未完賽" 
                 };
+                
+                // 【修改點】：匯出每個欄位的資料改為 lapSplitTimes (獨立單圈成績)
                 for (let i = 0; i < targetLaps; i++) {
-                    row[`第${i+1}圈`] = s.lapTimes[i] || "-";
+                    row[`第${i+1}圈`] = s.lapSplitTimes[i] || "-";
                 }
                 return row;
             });
@@ -661,6 +667,7 @@
                 students.forEach(s => {
                     s.currentLap = 0;
                     s.lapTimes = [];
+                    s.lapSplitTimes = []; // 清空單圈紀錄
                     s.lastLapTimeMs = 0;
                     s.lastLapTimeDifference = 0;
                     if(s.timeoutId) clearTimeout(s.timeoutId);
