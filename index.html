@@ -93,7 +93,7 @@
             <label>4. 進階設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用聲音啟動計時 (偵測哨音或大喊「GO」自動起跑)
+                啟用聲音啟動計時 (偵測一般對話音量哨音/GO)
             </label>
         </div>
 
@@ -103,12 +103,12 @@
     <div id="test-section">
         <div id="top-section">
             <div id="timer">00:00.00</div>
-            <button id="btn-start" class="control-btn" onclick="startTimer()">開始測驗 (Go)</button>
-            <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
+            <button id="btn-fullscreen" class="control-btn" onclick="toggleFullScreen()">全螢幕</button>
+            <button id="btn-reset" class="control-btn" onclick="resetTimer()">回到設定</button>
             <button id="btn-zero" class="control-btn" onclick="zeroTimer()">時間歸零</button>
             <button id="btn-finish" class="control-btn" onclick="finishTest()">測驗完成</button>
-            <button id="btn-reset" class="control-btn" onclick="resetTimer()">回到設定</button>
-            <button id="btn-fullscreen" class="control-btn" onclick="toggleFullScreen()">全螢幕</button>
+            <button id="btn-pause" class="control-btn" onclick="pauseTimer()">暫停</button>
+            <button id="btn-start" class="control-btn" onclick="startTimer()">開始測驗 (Go)</button>
         </div>
 
         <div id="camera-section">
@@ -237,7 +237,6 @@
                 };
             });
 
-            // 關閉預覽鏡頭釋放資源
             if (previewStream) {
                 previewStream.getTracks().forEach(t => t.stop());
                 previewStream = null;
@@ -249,11 +248,9 @@
             renderGrid();
             initCamera(); 
 
-            // 檢查是否啟用聲音啟動
             if (document.getElementById('chk-sound-start').checked) {
                 startSoundDetection();
             } else {
-                // 如果沒啟用，確保按鈕為預設樣式
                 const btnStart = document.getElementById('btn-start');
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
@@ -269,7 +266,6 @@
         async function startSoundDetection() {
             if (isListeningForSound) return;
             try {
-                // 要求麥克風權限
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
@@ -281,8 +277,8 @@
 
                 isListeningForSound = true;
                 const btnStart = document.getElementById('btn-start');
-                btnStart.innerText = "🎤 聽取哨音/GO中...";
-                btnStart.style.backgroundColor = "#9C27B0"; // 變成紫色提醒使用者正在監聽
+                btnStart.innerText = "🎤 聽取中...";
+                btnStart.style.backgroundColor = "#9C27B0"; 
 
                 function detectSound() {
                     if (!isListeningForSound) return;
@@ -293,10 +289,10 @@
                     }
                     let average = sum / bufferLength;
                     
-                    // 音量閾值設定為 90 (普通講話不會觸發，拍手/哨音/大喊很容易突破)
-                    if (average > 90 && !isRunning) { 
+                    // 【修正】將音量閾值從 90 調降至 40，確保一段距離外的一般哨音或 GO 也能觸發
+                    if (average > 40 && !isRunning) { 
                         startTimer();
-                        return; // 觸發後立刻結束偵測
+                        return; 
                     }
                     soundDetectionFrame = requestAnimationFrame(detectSound);
                 }
@@ -317,7 +313,6 @@
                 audioContext.close();
             }
         }
-
 
         // --- 介面控制邏輯 ---
         function toggleFullScreen() {
@@ -358,7 +353,6 @@
             
             let now = Date.now();
             
-            // 15 秒防誤觸判斷
             if (student.lastLapTimeMs > 0 && (now - student.lastLapTimeMs) < 15000) {
                 let splitSecs = ((difference - student.lastLapTimeDifference) / 1000).toFixed(2);
                 let confirmLap = confirm(`【防誤觸警告】\n${student.name} 距離上次紀錄不到 15 秒！\n(目前單圈時間：${splitSecs} 秒)\n\n確定要記錄這圈嗎？`);
@@ -368,15 +362,12 @@
             student.currentLap++;
             student.lapTimes.push(formatTime(difference)); 
             
-            // 計算單圈秒數 (Split Time)
             let splitTimeMs = difference - student.lastLapTimeDifference;
             let splitTimeStr = formatTime(splitTimeMs);
             
-            // 更新最後紀錄時間
             student.lastLapTimeMs = now;
             student.lastLapTimeDifference = difference;
             
-            // 介面更新：顯示單圈秒數 2 秒
             if (student.timeoutId) clearTimeout(student.timeoutId);
             btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.1rem;">單圈: ${splitTimeStr}</span>`;
             
@@ -387,7 +378,6 @@
                 btnElement.classList.add('finished'); 
             }
 
-            // 2 秒後恢復原本文字
             student.timeoutId = setTimeout(() => {
                 if (student.currentLap === targetLaps) {
                     btnElement.innerHTML = `${student.name} <br><span>(完賽)</span>`;
@@ -461,7 +451,7 @@
 
         // --- 計時器邏輯 ---
         let startTime, updatedTime, difference = 0;
-        let timerAnimationId; // 更改為 requestAnimationFrame 專用 ID
+        let timerAnimationId; 
         let isRunning = false;
         let timeSaved = 0;
 
@@ -478,7 +468,6 @@
             return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds + "." + (milliseconds < 10 ? "0" : "") + milliseconds;
         }
 
-        // 使用 requestAnimationFrame 達到零延遲滑順渲染
         function updateTimer() {
             if (!isRunning) return;
             updatedTime = Date.now();
@@ -489,13 +478,12 @@
 
         function startTimer() {
             if (!isRunning) {
-                stopSoundDetection(); // 確定起跑後，關閉聲音監聽避免消耗資源
+                stopSoundDetection(); 
                 
                 startTime = Date.now();
                 isRunning = true;
-                timerAnimationId = requestAnimationFrame(updateTimer); // 立刻開始更新畫面
+                timerAnimationId = requestAnimationFrame(updateTimer); 
                 
-                // 恢復手動按鈕樣式 (防呆，如果原本是紫色等待狀態)
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
                 
@@ -518,7 +506,7 @@
         function pauseTimer() {
             if (isRunning) {
                 isRunning = false;
-                cancelAnimationFrame(timerAnimationId); // 暫停動畫迴圈
+                cancelAnimationFrame(timerAnimationId); 
                 timeSaved = difference;
                 btnPause.innerText = "繼續";
 
@@ -531,21 +519,17 @@
             }
         }
 
-        // 時間歸零 (假起跑使用)
         function zeroTimer() {
             if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：碼表將暫停並等待重新開始，錄影持續進行)")) {
                 
-                // 1. 徹底停止計時器
                 isRunning = false;
                 cancelAnimationFrame(timerAnimationId);
                 
-                // 2. 數值歸零
                 startTime = Date.now();
                 timeSaved = 0;
                 difference = 0;
                 timerDisplay.innerText = "00:00.00";
                 
-                // 3. 清空所有學生的紀錄
                 students.forEach(s => {
                     s.currentLap = 0;
                     s.lapTimes = [];
@@ -553,15 +537,13 @@
                     s.lastLapTimeDifference = 0;
                     if(s.timeoutId) clearTimeout(s.timeoutId);
                 });
-                renderGrid(); // 重新繪製按鈕
+                renderGrid(); 
                 
-                // 4. 重置 UI 按鈕，讓老師可以重新按開始
                 btnStart.style.display = "inline-block";
                 btnPause.style.display = "none";
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
 
-                // 5. 如果使用者有勾選聲音觸發，歸零後自動重新啟動監聽！
                 if (document.getElementById('chk-sound-start').checked) {
                     startSoundDetection();
                 }
@@ -592,7 +574,7 @@
             if (confirm("警告：這將會清除當前所有紀錄與錄影檔，回到設定畫面。確定嗎？")) {
                 isRunning = false;
                 cancelAnimationFrame(timerAnimationId);
-                stopSoundDetection(); // 返回設定時也要關閉監聽
+                stopSoundDetection(); 
 
                 timeSaved = 0;
                 difference = 0;
