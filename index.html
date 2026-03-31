@@ -393,7 +393,7 @@
                     let delta = avg - volHistory[0];
                     
                     // 只要瞬間差距大於 15，且音量有達到基本門檻 40，就判定為起跑爆發音
-                    let isExplosive = (delta > 15 && avg > 40);
+                    let isExplosive = (delta > 10 && avg > 40);
                     
                     // 哨音一樣保留
                     let isWhistle = (highAvg > 60 && avg > 50);
