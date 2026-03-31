@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用防干擾精準起跑偵測 (語音GO/哨音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(精準鎖定 GO 與相近音，大喊預備不觸發)</span>
+                啟用極簡實戰聲控 (特化捕捉 GO 聲)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(零死角精準捕捉，大幅提升現場發令靈敏度)</span>
             </label>
         </div>
 
@@ -141,7 +141,7 @@
         let importedNames = [];
         let previewStream = null;
         
-        // 【關鍵修正 4】將 hasStarted 提升至全域，徹底解決重啟時的狀態丟失
+        // 【關鍵修正】：將 hasStarted 提升至全域，徹底解決重啟時的狀態丟失與死鎖
         let hasStarted = false; 
 
         // --- 網頁載入：取得相機權限 ---
@@ -272,7 +272,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.16 (最終極簡・實戰防呆版) ---
+        // --- 智能聲控辨識系統 v2.17 (極簡放寬實戰版) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -282,14 +282,15 @@
         async function autoStartSoundDetection() {
             const btnStart = document.getElementById('btn-start');
             const debugText = document.getElementById('voice-debug');
+            debugText.innerText = "啟動麥克風中...";
             
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 等待發令 (Go/哨音)...";
+                btnStart.innerText = "🎤 等待發令 (GO/哨音)...";
                 btnStart.style.backgroundColor = "#E91E63"; 
                 btnStart.onclick = startTimer; 
             } catch (err) {
-                console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
+                console.warn("自動啟動失敗，等待點擊", err);
                 btnStart.innerText = "👉 點擊啟用聲控";
                 btnStart.style.backgroundColor = "#FF9800";
                 debugText.innerText = "⚠️ 瀏覽器要求手動點擊按鈕以啟用麥克風";
@@ -301,7 +302,7 @@
                         btnStart.style.backgroundColor = "#E91E63";
                         btnStart.onclick = startTimer; 
                     } catch (e) {
-                        alert("無法存取麥克風，請確認瀏覽器權限！");
+                        alert("無法存取麥克風，請確認權限！");
                         btnStart.innerText = "開始測驗 (Go)";
                         btnStart.style.backgroundColor = "#4CAF50";
                         debugText.innerText = "❌ 無法使用麥克風";
@@ -325,7 +326,7 @@
 
                 isListeningForSound = true;
                 
-                // --- 引擎 1：哨音高精度頻譜分析 (保留物理輔助) ---
+                // --- 引擎 1：哨音高精度頻譜分析 ---
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -342,10 +343,10 @@
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
                 let triggerFrameCount = 0; 
-                debugText.innerText = "✅ 聲控系統準備就緒！";
+                debugText.innerText = "✅ 聲控系統準備就緒！請大喊 GO 或吹哨";
 
                 function detectSoundSpike() {
-                    if (!isListeningForSound || isRunning || hasStarted) return;
+                    if (!isListeningForSound || isRunning) return; 
                     analyser.getByteFrequencyData(dataArray);
                     
                     let voiceEnergy = 0;   
@@ -357,10 +358,9 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 嚴格高頻判定，保留給實體哨子使用
                     let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
 
-                    if (isWhistle) { 
+                    if (isWhistle && !hasStarted) { 
                         triggerFrameCount++;
                         if (triggerFrameCount >= 2) {
                             hasStarted = true;
@@ -375,31 +375,48 @@
                 }
                 detectSoundSpike();
 
-                // --- 引擎 2：語音關鍵字比對 (依據實戰回饋的終極版本) ---
+                // --- 引擎 2：語音關鍵字比對 (終極實戰版) ---
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     function buildRecognizer() {
                         const rec = new SpeechRecognition();
                         rec.continuous = true;      
-                        // 【關鍵修正 2】: interimResults 改為 false，只取最終結果，拒絕半成品亂入
+                        // 【關鍵修正 1】：關閉 interimResults，不接收半成品，只取最終結果，避免被 "g" 騙了
                         rec.interimResults = false;  
-                        // 【關鍵修正 1】: 語言切回台灣中文，因為我們實際發音口音用中文模型抓「諧音」最穩
+                        // 【關鍵修正 2】：改回台灣中文，用中文模型去包容破音與諧音是最穩的
                         rec.lang = 'zh-TW'; 
                         rec.maxAlternatives = 5;    
 
                         rec.onresult = (event) => {
-                            if (isRunning || hasStarted) return;
+                            // 【關鍵修正 3】：移除 hasStarted 判斷，不自己打自己，交給 isRunning 檔下重複觸發
+                            if (isRunning) return; 
+                            
                             for (let i = event.resultIndex; i < event.results.length; ++i) {
-                                for (let j = 0; j < event.results[i].length; ++j) {
-                                    let text = event.results[i][j].transcript.trim().toLowerCase();
+                                // 【關鍵修正 4】：正確展開 maxAlternatives 迴圈，不漏掉任何一個候選字
+                                let alternatives = event.results[i];
+                                for (let j = 0; j < alternatives.length; ++j) {
+                                    let text = alternatives[j].transcript.trim().toLowerCase();
                                     
                                     debugText.innerText = `聽到: "${text}"`;
                                     
-                                    // 【關鍵修正 3】: 最簡化、涵蓋率最高的模糊匹配
-                                    if (/g[o0]|走|夠|勾|高|狗|開始|跑|揍/i.test(text)) {
-                                        hasStarted = true;
+                                    // 【關鍵修正 5】：神級條件放寬！長度3以內有 g 或是相近中文字，以及起跑長單字
+                                    if (
+                                        (text.length <= 4 && (
+                                            text.includes('g') || 
+                                            text.includes('走') ||
+                                            text.includes('夠') ||
+                                            text.includes('勾') ||
+                                            text.includes('高') ||
+                                            text.includes('狗') ||
+                                            text.includes('揍')
+                                        ))
+                                        || text.includes('開始')
+                                        || text.includes('跑')
+                                        || text.includes('go')
+                                    ) {
+                                        hasStarted = true; // 正確設定狀態
                                         debugText.innerText = `🔥 語音觸發: "${text}"`;
-                                        startTimer();
+                                        startTimer(); // 執行計時
                                         return;
                                     }
                                 }
@@ -657,7 +674,7 @@
         function pauseTimer() {
             if (isRunning) {
                 isRunning = false;
-                hasStarted = false; // 允許語音重新觸發 (若有需要)
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId); 
                 timeSaved = difference;
                 btnPause.innerText = "繼續";
@@ -675,7 +692,7 @@
             if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：碼表將暫停並等待重新開始，錄影持續進行)")) {
                 
                 isRunning = false;
-                hasStarted = false; // 重置全域狀態，讓聲控可以重新運作
+                hasStarted = false; // 徹底重置
                 cancelAnimationFrame(timerAnimationId);
                 
                 startTime = Date.now();
@@ -734,7 +751,7 @@
         function resetTimer() {
             if (confirm("警告：這將會清除當前所有紀錄與錄影檔，回到設定畫面。確定嗎？")) {
                 isRunning = false;
-                hasStarted = false; // 徹底重置
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
                 stopSoundDetection(); 
 
