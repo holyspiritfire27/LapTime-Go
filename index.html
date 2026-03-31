@@ -12,7 +12,7 @@
         #setup-section { padding: 20px; background: white; flex-grow: 1; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
         .setup-group { border: 1px solid #ccc; padding: 15px; border-radius: 8px; background: #fafafa; }
         .setup-group label { display: block; margin-bottom: 10px; font-weight: bold; }
-        select, input[type="file"], input[type="number"], textarea { width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
+        select, input[type="file"], input[type="number"], input[type="text"], textarea { width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
         #btn-confirm-setup { background-color: #4CAF50; color: white; padding: 15px; font-size: 1.2rem; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 10px; flex-shrink: 0;}
         #btn-preview { background-color: #2196F3; color: white; border: none; border-radius: 4px; padding: 8px 15px; font-weight: bold; cursor: pointer; }
 
@@ -55,8 +55,10 @@
         <h2 style="margin-top: 0; margin-bottom: 5px;">測驗設定</h2>
         
         <div class="setup-group">
-            <label>1. 測驗距離與場地</label>
-            <select id="sel-distance" onchange="toggleCustomDistance()">
+            <label>1. 基本設定</label>
+            <input type="text" id="input-test-name" placeholder="測驗名稱 / 班級 (用於匯出檔名，例如: 7年1班)">
+            
+            <select id="sel-distance" onchange="toggleCustomDistance()" style="margin-top: 10px;">
                 <option value="800">800 公尺</option>
                 <option value="1600" selected>1600 公尺</option>
                 <option value="other">其他 (自填距離)</option>
@@ -75,7 +77,7 @@
                 <select id="sel-camera" style="flex-grow: 1; margin: 0;">
                     <option value="none">不錄影計時 (純碼表)</option>
                 </select>
-                <button id="btn-preview" type="button" onclick="previewCamera()">預覽鏡頭</button>
+                <button id="btn-preview" type="button" onclick="previewCamera()">預覽</button>
             </div>
             <video id="preview-video" autoplay playsinline muted style="display:none; width:100%; height:180px; object-fit:cover; margin-top:10px; background:#000; border-radius:8px;"></video>
         </div>
@@ -90,10 +92,11 @@
         </div>
 
         <div class="setup-group">
-            <label>4. 進階設定</label>
+            <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用聲音啟動計時 (偵測一般對話音量哨音/GO)
+                啟用哨音與語音(GO)辨識起跑<br>
+                <span style="font-size: 0.75rem; color:#666;">(自動過濾「各就位」、「預備」等人聲雜音)</span>
             </label>
         </div>
 
@@ -204,7 +207,6 @@
         });
 
         function startSetup() {
-            // 計算應跑圈數
             const distVal = document.getElementById('sel-distance').value;
             let dist = (distVal === 'other') ? parseInt(document.getElementById('input-custom-distance').value) : parseInt(distVal);
             
@@ -216,7 +218,6 @@
             const track = parseInt(document.getElementById('sel-track').value);
             targetLaps = Math.ceil(dist / track); 
 
-            // 處理名單
             let finalNames = [];
             if (importedNames.length > 0) {
                 finalNames = importedNames;
@@ -257,49 +258,86 @@
             }
         }
 
-        // --- 音量偵測觸比起跑邏輯 ---
+        // --- 智能雙引擎聲音辨識邏輯 (頻譜哨音 + 語音關鍵字) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
+        let speechRec = null;
         let isListeningForSound = false;
 
         async function startSoundDetection() {
             if (isListeningForSound) return;
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                isListeningForSound = true;
+                
+                const btnStart = document.getElementById('btn-start');
+                btnStart.innerText = "🎤 偵測哨音/GO中...";
+                btnStart.style.backgroundColor = "#9C27B0"; 
+
+                // 引擎 1：頻譜分析 (專門抓哨音，忽略一般人聲)
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
-                analyser.fftSize = 256;
+                analyser.fftSize = 512; 
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
 
-                isListeningForSound = true;
-                const btnStart = document.getElementById('btn-start');
-                btnStart.innerText = "🎤 聽取中...";
-                btnStart.style.backgroundColor = "#9C27B0"; 
-
-                function detectSound() {
+                function detectWhistle() {
                     if (!isListeningForSound) return;
                     analyser.getByteFrequencyData(dataArray);
-                    let sum = 0;
-                    for (let i = 0; i < bufferLength; i++) {
-                        sum += dataArray[i];
-                    }
-                    let average = sum / bufferLength;
                     
-                    // 【修正】將音量閾值從 90 調降至 40，確保一段距離外的一般哨音或 GO 也能觸發
-                    if (average > 40 && !isRunning) { 
+                    let voiceEnergy = 0;   // 低頻 (人聲主要分佈)
+                    let whistleEnergy = 0; // 高頻 (哨音主要分佈)
+
+                    // 每一個 bin 大約是 90Hz。
+                    for (let i = 1; i < 12; i++) voiceEnergy += dataArray[i];      // ~90Hz 到 ~1000Hz
+                    for (let i = 22; i < 45; i++) whistleEnergy += dataArray[i];   // ~2000Hz 到 ~4000Hz
+
+                    let voiceAvg = voiceEnergy / 11;
+                    let whistleAvg = whistleEnergy / 23;
+                    
+                    // 如果高頻能量極強，且明顯大於低頻能量，代表是哨音而非講話大聲
+                    if (whistleAvg > 120 && whistleAvg > voiceAvg * 1.5 && !isRunning) { 
                         startTimer();
                         return; 
                     }
-                    soundDetectionFrame = requestAnimationFrame(detectSound);
+                    soundDetectionFrame = requestAnimationFrame(detectWhistle);
                 }
-                detectSound();
+                detectWhistle();
+
+                // 引擎 2：語音關鍵字辨識 (專門抓 GO / 開始)
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (SpeechRecognition) {
+                    speechRec = new SpeechRecognition();
+                    speechRec.continuous = true;
+                    speechRec.interimResults = true;
+                    speechRec.lang = 'zh-TW';
+
+                    speechRec.onresult = (event) => {
+                        if (isRunning) return;
+                        for (let i = event.resultIndex; i < event.results.length; ++i) {
+                            let text = event.results[i][0].transcript.trim().toLowerCase();
+                            // 只抓取特定指令，忽略各就位、預備
+                            if (text.includes('go') || text.includes('夠') || text.includes('開始') || text.includes('跑')) {
+                                startTimer();
+                                return;
+                            }
+                        }
+                    };
+                    
+                    // 確保語音引擎不會自己斷線
+                    speechRec.onend = () => {
+                        if (isListeningForSound && !isRunning) {
+                            try { speechRec.start(); } catch(e){}
+                        }
+                    };
+                    speechRec.start();
+                }
+
             } catch (err) {
                 console.error("麥克風存取失敗:", err);
-                alert("無法啟動聲音觸發 (請確認瀏覽器麥克風權限)。已切換回純手動模式。");
                 const btnStart = document.getElementById('btn-start');
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
@@ -312,6 +350,10 @@
             if (audioContext && audioContext.state !== 'closed') {
                 audioContext.close();
             }
+            if (speechRec) {
+                speechRec.onend = null; 
+                speechRec.stop();
+            }
         }
 
         // --- 介面控制邏輯 ---
@@ -321,7 +363,7 @@
             const requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
             const cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
 
-            if (!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+            if (!doc.fullscreenElement) {
                 requestFullScreen.call(docEl);
                 document.getElementById('btn-fullscreen').innerText = "退出全螢幕";
             } else {
@@ -369,7 +411,9 @@
             student.lastLapTimeDifference = difference;
             
             if (student.timeoutId) clearTimeout(student.timeoutId);
-            btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.1rem;">單圈: ${splitTimeStr}</span>`;
+            
+            // 【優化】將顯示文字改為：第 X 圈: XX:XX.XX
+            btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;
             
             if (student.currentLap === targetLaps - 1) {
                 btnElement.classList.add('last-lap'); 
@@ -384,9 +428,10 @@
                 } else {
                     btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
                 }
-            }, 2000);
+            }, 2500); // 稍微延長顯示時間到2.5秒，方便老師看清楚
         }
 
+        // --- 匯出檔案邏輯 (自訂檔名) ---
         function exportExcel() {
             let exportData = students.map(s => {
                 let row = { 
@@ -402,7 +447,12 @@
             const worksheet = XLSX.utils.json_to_sheet(exportData);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "測驗成績");
-            XLSX.writeFile(workbook, `測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}.xlsx`);
+            
+            // 讀取老師輸入的自訂名稱
+            let customName = document.getElementById('input-test-name').value.trim();
+            let fileName = customName ? `${customName}_測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}` : `測驗成績_${new Date().toLocaleDateString().replace(/\//g,'')}`;
+            
+            XLSX.writeFile(workbook, `${fileName}.xlsx`);
         }
 
         // --- 相機與錄影邏輯 ---
@@ -437,8 +487,12 @@
                     const url = URL.createObjectURL(blob);
                     const btnDlVideo = document.getElementById('btn-dl-video');
                     btnDlVideo.href = url;
+                    
+                    // 錄影檔也套用自訂名稱
                     const ext = (mediaRecorder.mimeType && mediaRecorder.mimeType.includes('webm')) ? 'webm' : 'mp4';
-                    btnDlVideo.download = `測驗錄影_${new Date().getTime()}.${ext}`;
+                    let customName = document.getElementById('input-test-name').value.trim();
+                    let videoName = customName ? `${customName}_錄影_${new Date().getTime()}` : `測驗錄影_${new Date().getTime()}`;
+                    btnDlVideo.download = `${videoName}.${ext}`;
                     
                     document.getElementById('download-section').style.display = 'flex';
                     recordedChunks = []; 
