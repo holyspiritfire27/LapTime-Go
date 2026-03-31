@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用極端靈敏度起跑偵測 (哨音/吼聲/語音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(寧可誤觸絕不漏抓：支援大聲吼叫強制觸發)</span>
+                啟用防護型高靈敏起跑偵測 (大聲GO/哨音)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(已排除「預備」等口令，需宏亮喊出GO才觸發)</span>
             </label>
         </div>
 
@@ -262,7 +262,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.11 (極端靈敏：爆音物理觸發 + 模糊語音攔截) ---
+        // --- 智能聲控辨識系統 v2.12 (音量門檻提高 + 移除預備口令) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -273,8 +273,8 @@
             const btnStart = document.getElementById('btn-start');
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 偵測起跑指令中(極度靈敏)...";
-                btnStart.style.backgroundColor = "#E91E63"; // 改為醒目的粉紅色
+                btnStart.innerText = "🎤 等待大聲GO/哨音...";
+                btnStart.style.backgroundColor = "#E91E63"; 
                 btnStart.onclick = startTimer; 
             } catch (err) {
                 console.warn("自動啟動失敗，等待使用者實體點擊解鎖", err);
@@ -341,16 +341,14 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 【殺手鐧 1】：放寬哨音條件
                     let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
                     
-                    // 【殺手鐧 2】：只要人聲頻段瞬間爆出巨響 (吼叫 GO 導致破音)，直接當作起跑觸發！
-                    // (100 是一個足以過濾一般交談，但大喊時一定會突破的閾值)
-                    let isLoudShout = (voiceAvg > 100); 
+                    // 【修正點 1】：將爆音閾值從 100 提高到 135
+                    // 一般講話或喊「預備」不會超過這個值，必須是宏亮的吼聲才會突破
+                    let isLoudShout = (voiceAvg > 135); 
 
                     if ((isWhistle || isLoudShout) && !isRunning && !hasStarted) { 
                         triggerFrameCount++;
-                        // 寧可誤觸，只要偵測到連續 2 幀 (約 30ms) 的巨響就觸發
                         if (triggerFrameCount >= 2) {
                             hasStarted = true;
                             startTimer();
@@ -379,9 +377,9 @@
                                 for (let j = 0; j < event.results[i].length; ++j) {
                                     let text = event.results[i][j].transcript.trim().toLowerCase();
                                     
-                                    // 【殺手鐧 3】：極度寬鬆的正則表達式。只要「包含」這些音節就觸發！
-                                    // 涵蓋了破音可能被辨識成的各種發音，以及常見的中文起跑詞
-                                    if (/(go|no|yo|oh|ok|out|now|start|跑|走|狗|夠|好|開始|預備|喔|啊|呀)/i.test(text)) {
+                                    // 【修正點 2】：移除「預備」、「好」、「ok」等準備口令
+                                    // 只留下真正的爆發性起跑指令與相近音節
+                                    if (/(go|no|yo|oh|out|now|start|跑|走|狗|夠|開始|衝|啊|呀)/i.test(text)) {
                                         hasStarted = true;
                                         startTimer();
                                         return;
