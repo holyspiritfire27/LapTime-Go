@@ -363,7 +363,7 @@
                     
                     // 【關鍵修正 1】：哨音絕對閾值提高至 130，人聲比例提高至 3 倍
                     let isWhistle = (whistleAvg > 300 && whistleAvg > voiceAvg * 3.0);
-                    let isShout = (voiceAvg > 150 && voiceAvg > bgNoise + 50);
+                    let isShout = (voiceAvg > 140 && voiceAvg > bgNoise + 50);
 
                     if ((isWhistle || isShout) && !hasStarted) { 
                         triggerFrameCount++;
