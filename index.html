@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用最強實戰聲控 (專注捕捉 GO 的所有變形)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(語音或哨聲啟動計時)</span>
+                啟用【物理聲波爆發偵測】起跑引擎<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(喊GO或哨音啟動計時)</span>
             </label>
         </div>
 
@@ -269,7 +269,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.20 (最強實戰・精準抓取現實版) ---
+        // --- 智能聲控辨識系統 v2.21 (極限物理聲波爆發引擎) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -283,7 +283,7 @@
             
             try {
                 await startSoundDetection();
-                btnStart.innerText = "🎤 聲控已解鎖 (大喊 GO)...";
+                btnStart.innerText = "🎤 聲控已解鎖 (大喊 GO/拍手)...";
                 btnStart.style.backgroundColor = "#E91E63"; 
                 btnStart.onclick = startTimer; 
             } catch (err) {
@@ -295,7 +295,7 @@
                 btnStart.onclick = async () => {
                     try {
                         await startSoundDetection();
-                        btnStart.innerText = "🎤 聲控已解鎖 (大喊 GO)...";
+                        btnStart.innerText = "🎤 聲控已解鎖 (大喊 GO/拍手)...";
                         btnStart.style.backgroundColor = "#E91E63";
                         btnStart.onclick = startTimer; 
                     } catch (e) {
@@ -316,7 +316,7 @@
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // 引擎 1：保留嚴格的高頻哨音物理偵測 (防呆輔助)
+                // 啟動 AudioContext (物理聲波引擎)
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioContext.state === 'suspended') {
                     await audioContext.resume();
@@ -329,101 +329,113 @@
                 microphone.connect(analyser);
                 analyser.fftSize = 2048; 
                 const bufferLength = analyser.frequencyBinCount;
+                
+                // 陣列 1: 頻譜 (用來抓高頻哨音)
                 const dataArray = new Uint8Array(bufferLength);
+                // 陣列 2: 波形 (🔥新核心：用來抓大喊 GO 的瞬間爆發振幅)
+                const timeDataArray = new Uint8Array(bufferLength);
                 
                 const sampleRate = audioContext.sampleRate;
                 const hzPerBin = sampleRate / analyser.fftSize;
-                
-                const voiceStartBin = Math.floor(200 / hzPerBin);
-                const voiceEndBin = Math.floor(3000 / hzPerBin);
                 const whistleStartBin = Math.floor(2000 / hzPerBin);
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
                 let triggerFrameCount = 0; 
-                debugText.innerText = "✅ 聲控就緒！請大喊 GO";
+                let recentAmplitudes = []; // 紀錄環境背景音量
+                
+                debugText.innerText = "✅ 聲控就緒！請大喊 GO 或拍手";
 
                 function detectSoundSpike() {
                     if (!isListeningForSound || isRunning || hasStarted) return; 
-                    analyser.getByteFrequencyData(dataArray);
                     
-                    let voiceEnergy = 0;   
+                    // 同時抓取頻譜與波形
+                    analyser.getByteFrequencyData(dataArray);
+                    analyser.getByteTimeDomainData(timeDataArray);
+                    
+                    // ==========================================
+                    // 引擎 A：物理爆發音偵測 (專抓大喊 GO / 起跑板 / 拍手)
+                    // ==========================================
+                    let maxAmp = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        // 128 是靜音基準線，計算偏離值(絕對振幅)
+                        let amp = Math.abs(timeDataArray[i] - 128); 
+                        if (amp > maxAmp) maxAmp = amp;
+                    }
+
+                    // 維護過去約 0.5 秒的平均背景音量 (防呆機制)
+                    recentAmplitudes.push(maxAmp);
+                    if (recentAmplitudes.length > 30) recentAmplitudes.shift();
+                    let bgAmp = recentAmplitudes.reduce((a, b) => a + b, 0) / recentAmplitudes.length;
+
+                    // 🔥 核心判斷：
+                    // "各就位/預備" 一般講話的振幅約在 20~50 且有緩衝。
+                    // "GO!" 振幅會瞬間衝高 (>85)，並且遠大於背景音量。
+                    let isExplosiveSound = (maxAmp > 85) && (maxAmp > bgAmp + 35);
+
+                    if (isExplosiveSound && !hasStarted) {
+                        hasStarted = true;
+                        debugText.innerText = `🔥 爆發音觸發! (衝擊力: ${maxAmp})`;
+                        startTimer();
+                        return;
+                    }
+
+                    // ==========================================
+                    // 引擎 B：嚴格哨音條件 (專抓裁判長哨)
+                    // ==========================================
                     let whistleEnergy = 0; 
-
-                    for (let i = voiceStartBin; i <= voiceEndBin; i++) voiceEnergy += dataArray[i];      
-                    for (let i = whistleStartBin; i <= whistleEndBin; i++) whistleEnergy += dataArray[i];   
-
-                    let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
+                    let totalEnergy = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        totalEnergy += dataArray[i];
+                        if(i >= whistleStartBin && i <= whistleEndBin) whistleEnergy += dataArray[i];
+                    }
+                    let generalAvg = totalEnergy / bufferLength;
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 嚴格哨音條件 (濾掉拍手/金屬聲)
-                    let isWhistle = (whistleAvg > 130 && whistleAvg > voiceAvg * 3.0);
+                    let isWhistle = (whistleAvg > 130 && whistleAvg > generalAvg * 3.0);
 
                     if (isWhistle && !hasStarted) { 
                         triggerFrameCount++;
-                        if (triggerFrameCount >= 4) {
+                        if (triggerFrameCount >= 3) { // 連續3幀確認是哨音
                             hasStarted = true;
-                            debugText.innerText = "🔥 物理觸發: 哨音";
+                            debugText.innerText = "🔥 哨音觸發!";
                             startTimer();
                             return;
                         }
                     } else {
                         triggerFrameCount = 0; 
                     }
+                    
                     soundDetectionFrame = requestAnimationFrame(detectSoundSpike);
                 }
                 detectSoundSpike();
 
-                // --- 引擎 2：語音關鍵字比對 (最強實戰邏輯版) ---
+                // ==========================================
+                // 引擎 C：Web 語音辨識 (保留作為溫和指令的備用)
+                // ==========================================
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     function buildRecognizer() {
                         const rec = new SpeechRecognition();
                         rec.continuous = true;      
-                        
-                        // 🔥 關鍵修復 1：關閉 interimResults，不拿半成品碎塊
                         rec.interimResults = false;  
-                        
-                        // 🔥 關鍵修復 2：改回台灣中文，用中文模型包容實際的發音變形
                         rec.lang = 'zh-TW'; 
-                        rec.maxAlternatives = 5;    
+                        rec.maxAlternatives = 1;    
 
                         rec.onresult = (event) => {
                             if (isRunning || hasStarted) return; 
-                            
                             for (let i = event.resultIndex; i < event.results.length; ++i) {
-                                // 🔥 關鍵修復 3：完整遍歷所有候選詞，不漏抓任何可能
-                                let alternatives = event.results[i];
-                                for (let j = 0; j < alternatives.length; ++j) {
-                                    let text = alternatives[j].transcript.trim().toLowerCase();
-                                    
-                                    if (text) {
-                                        debugText.innerText = `聽到: "${text}"`;
-                                        console.log("聽到:", text); // Console 除錯用
-                                    }
-                                    
-                                    // 🔥 關鍵修復 4：短字 + GO 類聲音的最穩妥判斷法
-                                    if (
-                                        (text.length <= 3 && (
-                                            text.includes('g') || 
-                                            text.includes('走') ||
-                                            text.includes('夠') ||
-                                            text.includes('勾') ||
-                                            text.includes('狗') ||
-                                            text.includes('高') ||
-                                            text.includes('揍')
-                                        ))
-                                        || text.includes('開始')
-                                        || text.includes('跑')
-                                    ) {
-                                        hasStarted = true;
-                                        debugText.innerText = `🔥 語音觸發: "${text}"`;
-                                        startTimer();
-                                        return;
-                                    }
+                                let text = event.results[i][0].transcript.trim().toLowerCase();
+                                if (
+                                    (text.length <= 3 && (text.includes('g') || text.includes('走') || text.includes('夠') || text.includes('勾') || text.includes('跑')))
+                                    || text.includes('開始')
+                                ) {
+                                    hasStarted = true;
+                                    debugText.innerText = `🔥 語音觸發: "${text}"`;
+                                    startTimer();
+                                    return;
                                 }
                             }
                         };
-                        
                         rec.onend = () => {
                             if (isListeningForSound && !isRunning && !hasStarted) {
                                 speechRec = buildRecognizer();
@@ -693,7 +705,7 @@
             if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：碼表將暫停並等待重新開始，錄影持續進行)")) {
                 
                 isRunning = false;
-                hasStarted = false; // 徹底重置
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
                 
                 startTime = Date.now();
