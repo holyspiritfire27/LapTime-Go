@@ -97,8 +97,8 @@
             <label>4. 智能聲控設定</label>
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
-                啟用終極防呆聲控 (專注捕捉 GO 聲與爆發音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(大喊觸發計時)</span>
+                啟用完美實戰聲控 (專注捕捉 GO 聲與哨音)<br>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(嚴格過濾雜音，純英文引擎精準鎖定 "GO")</span>
             </label>
         </div>
 
@@ -141,7 +141,6 @@
         let importedNames = [];
         let previewStream = null;
         
-        // 【最關鍵修復】：hasStarted 必須為全域變數，確保各個非同步事件能準確讀取並阻擋重複觸發
         let hasStarted = false; 
 
         // --- 網頁載入：取得相機權限 ---
@@ -242,7 +241,7 @@
                 return { 
                     id: index, name: name, currentLap: 0, 
                     lapTimes: [], 
-                    lapSplitTimes: [], // 單圈獨立秒數
+                    lapSplitTimes: [], 
                     lastLapTimeMs: 0, lastLapTimeDifference: 0, timeoutId: null 
                 };
             });
@@ -258,7 +257,6 @@
             renderGrid();
             initCamera(); 
 
-            // 進測驗畫面時重置全域狀態
             hasStarted = false;
 
             if (document.getElementById('chk-sound-start').checked) {
@@ -272,7 +270,7 @@
             }
         }
 
-        // --- 智能聲控辨識系統 (最終究極整合版) ---
+        // --- 智能聲控辨識系統 v2.18 (完美防呆、純淨 GO 觸發) ---
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -326,7 +324,7 @@
 
                 isListeningForSound = true;
                 
-                // --- 引擎 1：哨音與大叫(人聲爆發)頻譜分析 ---
+                // --- 引擎 1：哨音與大叫頻譜分析 (嚴格化物理防呆) ---
                 analyser = audioContext.createAnalyser();
                 const microphone = audioContext.createMediaStreamSource(stream);
                 microphone.connect(analyser);
@@ -343,7 +341,7 @@
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
                 let triggerFrameCount = 0; 
-                let bgNoise = 0; // 環境底噪追蹤
+                let bgNoise = 0; 
 
                 debugText.innerText = "✅ 系統就緒！大喊 GO 即可起跑";
 
@@ -360,20 +358,19 @@
                     let voiceAvg = voiceEnergy / (voiceEndBin - voiceStartBin + 1);
                     let whistleAvg = whistleEnergy / (whistleEndBin - whistleStartBin + 1);
                     
-                    // 動態更新底噪 (平滑過濾漸強的預備聲)
                     if (bgNoise === 0) bgNoise = voiceAvg;
                     bgNoise = bgNoise * 0.95 + voiceAvg * 0.05;
                     
-                    let isWhistle = (whistleAvg > 80 && whistleAvg > voiceAvg * 2.0);
-                    // 只要音量大於基本閾值，且瞬間飆高超過底噪 50，視為大叫 GO 的爆發音
-                    let isShout = (voiceAvg > 180 && voiceAvg > bgNoise + 50);
+                    // 【關鍵修正 1】：哨音絕對閾值提高至 130，人聲比例提高至 3 倍
+                    let isWhistle = (whistleAvg > 130 && whistleAvg > voiceAvg * 3.0);
+                    let isShout = (voiceAvg > 70 && voiceAvg > bgNoise + 35);
 
                     if ((isWhistle || isShout) && !hasStarted) { 
                         triggerFrameCount++;
-                        // 連續2幀確認，防止極短雜音
-                        if (triggerFrameCount >= 2) {
+                        // 【關鍵修正 2】：需連續 4 幀確認 (~67ms)，完美過濾短暫金屬碰撞或拍手雜音
+                        if (triggerFrameCount >= 4) {
                             hasStarted = true;
-                            debugText.innerText = isWhistle ? "🔥 物理觸發: 哨音" : "🔥 物理觸發: 爆發音(大喊)";
+                            debugText.innerText = isWhistle ? "🔥 物理觸發: 哨音" : "🔥 物理觸發: 大喊發令(GO)";
                             startTimer();
                             return;
                         }
@@ -384,16 +381,16 @@
                 }
                 detectSoundSpike();
 
-                // --- 引擎 2：語音關鍵字極限容錯比對 ---
+                // --- 引擎 2：語音關鍵字比對 (純英文、專抓 GO) ---
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     function buildRecognizer() {
                         const rec = new SpeechRecognition();
                         rec.continuous = true;      
-                        
-                        // 必須開啟 interimResults！捕捉零點幾秒的半成品 (g, 狗)
                         rec.interimResults = true;  
-                        rec.lang = 'zh-TW'; 
+                        
+                        // 【關鍵修正 3】：切換為英文模型，最精準捕捉英文單字 "GO"
+                        rec.lang = 'en-US'; 
                         rec.maxAlternatives = 5;    
 
                         rec.onresult = (event) => {
@@ -406,21 +403,8 @@
                                     
                                     if (text && !hasStarted) debugText.innerText = `聽到: "${text}"`;
                                     
-                                    // 最強容錯：限制字串長度防雜訊，只要沾到邊就啟動
-                                    if (
-                                        (text.length <= 5 && (
-                                            text.includes('g') || 
-                                            text.includes('走') ||
-                                            text.includes('夠') ||
-                                            text.includes('勾') ||
-                                            text.includes('高') ||
-                                            text.includes('狗') ||
-                                            text.includes('揍')
-                                        ))
-                                        || text.includes('開始')
-                                        || text.includes('跑')
-                                        || text === 'go'
-                                    ) {
+                                    // 【關鍵修正 4】：純粹的正則表達式，嚴格限定為 "go" (允許標點符號結尾)
+                                    if (/^go[!?.]?$/i.test(text)) {
                                         if (!hasStarted) {
                                             hasStarted = true;
                                             debugText.innerText = `🔥 語音觸發: "${text}"`;
@@ -522,12 +506,11 @@
 
             student.currentLap++;
             
-            // 單圈獨立時間計算
             let splitTimeMs = difference - student.lastLapTimeDifference;
             let splitTimeStr = formatTime(splitTimeMs);
             
-            student.lapTimes.push(formatTime(difference)); // 累計時間
-            student.lapSplitTimes.push(splitTimeStr);      // 獨立時間
+            student.lapTimes.push(formatTime(difference)); 
+            student.lapSplitTimes.push(splitTimeStr); 
             
             student.lastLapTimeMs = now;
             student.lastLapTimeDifference = difference;
@@ -553,7 +536,7 @@
             }, 2500);
         }
 
-        // --- 匯出檔案邏輯 (單圈獨立秒數版) ---
+        // --- 匯出檔案邏輯 ---
         function exportExcel() {
             let exportData = students.map(s => {
                 let row = { 
@@ -562,7 +545,6 @@
                     "總成績": s.currentLap === targetLaps ? s.lapTimes[s.lapTimes.length - 1] : "未完賽" 
                 };
                 
-                // 匯出各圈的獨立成績，而非累加時間
                 for (let i = 0; i < targetLaps; i++) {
                     row[`第${i+1}圈`] = s.lapSplitTimes[i] || "-";
                 }
@@ -685,7 +667,7 @@
         function pauseTimer() {
             if (isRunning) {
                 isRunning = false;
-                hasStarted = false; // 允許語音重新觸發 (若有需要)
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId); 
                 timeSaved = difference;
                 btnPause.innerText = "繼續";
@@ -703,7 +685,7 @@
             if (confirm("【警告】\n確定要將時間歸零，並清除所有學生的圈數紀錄嗎？\n\n(注意：碼表將暫停並等待重新開始，錄影持續進行)")) {
                 
                 isRunning = false;
-                hasStarted = false; // 重置全域狀態，讓聲控可以重新運作
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
                 
                 startTime = Date.now();
@@ -728,7 +710,6 @@
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
 
-                // 重啟聲控機制
                 if (document.getElementById('chk-sound-start').checked) {
                     stopSoundDetection();
                     setTimeout(() => {
@@ -763,7 +744,7 @@
         function resetTimer() {
             if (confirm("警告：這將會清除當前所有紀錄與錄影檔，回到設定畫面。確定嗎？")) {
                 isRunning = false;
-                hasStarted = false; // 徹底重置
+                hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
                 stopSoundDetection(); 
 
