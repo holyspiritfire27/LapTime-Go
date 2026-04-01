@@ -98,7 +98,7 @@
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
                 啟用完美實戰聲控 (專注捕捉 GO 聲與哨音)<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(大喊"GO"或哨音聲控啟動計時)</span>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(大喊"GO"或哨音啟動計時)</span>
             </label>
         </div>
 
@@ -363,7 +363,7 @@
                     
                     // 【關鍵修正 1】：哨音絕對閾值提高至 130，人聲比例提高至 3 倍
                     let isWhistle = (whistleAvg > 130 && whistleAvg > voiceAvg * 3.0);
-                    let isShout = (voiceAvg > 100 && voiceAvg > bgNoise + 35);
+                    let isShout = (voiceAvg > 100 && voiceAvg > bgNoise + 70);
 
                     if ((isWhistle || isShout) && !hasStarted) { 
                         triggerFrameCount++;
