@@ -44,7 +44,7 @@
         /* 下半部：學生按鈕網格 */
         #student-section { padding: 10px; overflow-y: auto; flex-grow: 1; }
         #student-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; }
-        .student-btn { padding: 15px 5px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; background-color: #2196F3; color: white; transition: 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .student-btn { padding: 15px 5px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; background-color: #2196F3; color: white; transition: background-color 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .student-btn span { display: block; font-size: 0.85rem; margin-top: 5px; opacity: 0.9; }
         .student-btn.last-lap { background-color: #E91E63; } 
         .student-btn.finished { background-color: #9E9E9E; pointer-events: none; } 
@@ -98,7 +98,7 @@
             <label style="font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="chk-sound-start" checked style="width: 20px; margin: 0;">
                 啟用【物理聲波爆發偵測】起跑引擎<br>
-                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(喊GO或哨音啟動計時)</span>
+                <span style="font-size: 0.75rem; color:#E91E63; font-weight:bold;">(大喊GO或哨音的瞬間衝擊波啟動)</span>
             </label>
         </div>
 
@@ -269,7 +269,38 @@
             }
         }
 
-        // --- 智能聲控辨識系統 v2.21 (極限物理聲波爆發引擎) ---
+        // ==========================================
+        // 動態排名系統 (將畫面上學生依成績即時排序)
+        // ==========================================
+        function sortGrid() {
+            // 建立包含原始索引的拷貝，以防破壞點擊事件對應的 ID
+            let sorted = students.map((s, idx) => ({ ...s, originalIndex: idx }));
+            
+            sorted.sort((a, b) => {
+                // 1. 比較圈數 (跑得多的在前面)
+                if (a.currentLap !== b.currentLap) {
+                    return b.currentLap - a.currentLap; 
+                }
+                // 2. 如果都還沒起跑 (0圈)，維持原始座號/輸入順序
+                if (a.currentLap === 0) {
+                    return a.id - b.id; 
+                }
+                // 3. 圈數相同時，比較到達該圈的「總累計時間」(越短的越快，排在前面)
+                return a.lastLapTimeDifference - b.lastLapTimeDifference;
+            });
+
+            // 將排序結果反映到 DOM 的 CSS order 屬性上 (瞬間無縫變更排版)
+            sorted.forEach((student, position) => {
+                let btn = document.getElementById(`student-btn-${student.originalIndex}`);
+                if (btn) {
+                    btn.style.order = position;
+                }
+            });
+        }
+
+        // ==========================================
+        // 智能聲控辨識系統 (物理聲波爆發引擎)
+        // ==========================================
         let audioContext;
         let analyser;
         let soundDetectionFrame;
@@ -316,7 +347,6 @@
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // 啟動 AudioContext (物理聲波引擎)
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioContext.state === 'suspended') {
                     await audioContext.resume();
@@ -332,7 +362,7 @@
                 
                 // 陣列 1: 頻譜 (用來抓高頻哨音)
                 const dataArray = new Uint8Array(bufferLength);
-                // 陣列 2: 波形 (🔥新核心：用來抓大喊 GO 的瞬間爆發振幅)
+                // 陣列 2: 波形 (用來抓大喊 GO 的瞬間爆發振幅)
                 const timeDataArray = new Uint8Array(bufferLength);
                 
                 const sampleRate = audioContext.sampleRate;
@@ -341,35 +371,28 @@
                 const whistleEndBin = Math.floor(4500 / hzPerBin);
 
                 let triggerFrameCount = 0; 
-                let recentAmplitudes = []; // 紀錄環境背景音量
+                let recentAmplitudes = []; 
                 
                 debugText.innerText = "✅ 聲控就緒！請大喊 GO 或拍手";
 
                 function detectSoundSpike() {
                     if (!isListeningForSound || isRunning || hasStarted) return; 
                     
-                    // 同時抓取頻譜與波形
                     analyser.getByteFrequencyData(dataArray);
                     analyser.getByteTimeDomainData(timeDataArray);
                     
-                    // ==========================================
-                    // 引擎 A：物理爆發音偵測 (專抓大喊 GO / 起跑板 / 拍手)
-                    // ==========================================
+                    // --- 引擎 A：物理爆發音偵測 ---
                     let maxAmp = 0;
                     for (let i = 0; i < bufferLength; i++) {
-                        // 128 是靜音基準線，計算偏離值(絕對振幅)
                         let amp = Math.abs(timeDataArray[i] - 128); 
                         if (amp > maxAmp) maxAmp = amp;
                     }
 
-                    // 維護過去約 0.5 秒的平均背景音量 (防呆機制)
                     recentAmplitudes.push(maxAmp);
                     if (recentAmplitudes.length > 30) recentAmplitudes.shift();
                     let bgAmp = recentAmplitudes.reduce((a, b) => a + b, 0) / recentAmplitudes.length;
 
-                    // 🔥 核心判斷：
-                    // "各就位/預備" 一般講話的振幅約在 20~50 且有緩衝。
-                    // "GO!" 振幅會瞬間衝高 (>85)，並且遠大於背景音量。
+                    // "各就位/預備" 有緩衝不會衝破，"GO!" 或 "拍手" 瞬間振幅會直接頂上去
                     let isExplosiveSound = (maxAmp > 85) && (maxAmp > bgAmp + 35);
 
                     if (isExplosiveSound && !hasStarted) {
@@ -379,9 +402,7 @@
                         return;
                     }
 
-                    // ==========================================
-                    // 引擎 B：嚴格哨音條件 (專抓裁判長哨)
-                    // ==========================================
+                    // --- 引擎 B：嚴格哨音條件 ---
                     let whistleEnergy = 0; 
                     let totalEnergy = 0;
                     for (let i = 0; i < bufferLength; i++) {
@@ -395,7 +416,7 @@
 
                     if (isWhistle && !hasStarted) { 
                         triggerFrameCount++;
-                        if (triggerFrameCount >= 3) { // 連續3幀確認是哨音
+                        if (triggerFrameCount >= 3) {
                             hasStarted = true;
                             debugText.innerText = "🔥 哨音觸發!";
                             startTimer();
@@ -409,9 +430,7 @@
                 }
                 detectSoundSpike();
 
-                // ==========================================
-                // 引擎 C：Web 語音辨識 (保留作為溫和指令的備用)
-                // ==========================================
+                // --- 引擎 C：Web 語音辨識 (輔助捕捉一般指令) ---
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
                     function buildRecognizer() {
@@ -489,6 +508,8 @@
             grid.innerHTML = ''; 
             students.forEach((student, index) => {
                 let btn = document.createElement('button');
+                // 加入專屬 ID，供動態排序時選取
+                btn.id = `student-btn-${index}`;
                 btn.className = 'student-btn';
                 
                 if (student.currentLap >= targetLaps) {
@@ -505,6 +526,8 @@
                 btn.onclick = () => recordLap(index, btn);
                 grid.appendChild(btn);
             });
+            // 初始化時排序 (照座號排)
+            sortGrid();
         }
 
         // --- 核心：計時與紀錄邏輯 ---
@@ -535,6 +558,9 @@
             student.lastLapTimeMs = now;
             student.lastLapTimeDifference = difference;
             
+            // 🔥 成績紀錄完畢，立刻依據最新領先狀態重排畫面順序！
+            sortGrid(); 
+
             if (student.timeoutId) clearTimeout(student.timeoutId);
             
             btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;
@@ -722,7 +748,7 @@
                     s.lastLapTimeDifference = 0;
                     if(s.timeoutId) clearTimeout(s.timeoutId);
                 });
-                renderGrid(); 
+                renderGrid(); // 歸零時重新渲染，名單順序會回到初始設定
                 
                 btnStart.style.display = "inline-block";
                 btnPause.style.display = "none";
