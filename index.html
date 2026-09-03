@@ -131,7 +131,7 @@
             <div id="recording-indicator">⏺ 錄影中</div>
         </div>
 
-        <!-- 新增：群體全選控制列 -->
+        <!-- 批次操作控制列 -->
         <div id="batch-control-bar">
             <div id="batch-instruction">👥 應付多人同時過線<br><span style="font-size:0.75rem; color:#666;">點擊右方全選，自動捕捉當下時間</span></div>
             <div>
@@ -301,12 +301,10 @@
             const instruction = document.getElementById('batch-instruction');
 
             if (!isBatchMode) {
-                // 1. 進入全選模式，凍結當下時間
                 isBatchMode = true;
-                batchCaptureTime = difference; // 擷取按下的精確時刻
+                batchCaptureTime = difference; 
                 batchSelectedSet.clear();
 
-                // 2. 選取畫面上所有未完賽的學生
                 students.forEach((s, idx) => {
                     if (s.currentLap < targetLaps) {
                         batchSelectedSet.add(idx);
@@ -315,19 +313,16 @@
                     }
                 });
 
-                // 3. 更新 UI
                 btnAction.innerText = "✔️ 確定寫入成績";
                 btnAction.style.background = "#4CAF50";
                 btnCancel.style.display = "inline-block";
                 instruction.innerHTML = `已擷取成績時間 <span style="color:#E65100; font-size:1.1rem;">${formatTime(batchCaptureTime)}</span><br><span style="font-size:0.8rem; color:#666;">點擊名牌可「取消」未經過的落後學生</span>`;
             } else {
-                // 4. 執行確定，寫入成績
                 let timeToApply = batchCaptureTime;
-                let targets = Array.from(batchSelectedSet); // 轉陣列備份，避免受後續操作影響
+                let targets = Array.from(batchSelectedSet); 
 
-                cancelBatch(); // 恢復 UI 狀態
+                cancelBatch(); 
 
-                // 替所有被選取的學生記錄成績 (帶入凍結的時間)
                 targets.forEach(idx => {
                     let btn = document.getElementById(`student-btn-${idx}`);
                     if(btn) recordLap(idx, btn, timeToApply);
@@ -345,7 +340,6 @@
             document.getElementById('btn-batch-cancel').style.display = "none";
             document.getElementById('batch-instruction').innerHTML = "👥 應付多人同時過線<br><span style='font-size:0.75rem; color:#666;'>點擊右方全選，自動捕捉當下時間</span>";
 
-            // 移除畫面上所有的選取外觀
             document.querySelectorAll('.student-btn').forEach(btn => {
                 btn.classList.remove('batch-selected');
             });
@@ -564,7 +558,6 @@
                 return;
             }
 
-            // 【攔截】若在批次選取模式下點擊學生按鈕，則切換選取狀態，不記錄成績
             if (isBatchMode && customTime === null) {
                 if (batchSelectedSet.has(index)) {
                     batchSelectedSet.delete(index);
@@ -577,51 +570,49 @@
             }
 
             let student = students[index];
-            if (student.currentLap >= targetLaps) return;[cite: 6]
+            if (student.currentLap >= targetLaps) return;
             
-            // 使用傳入的 customTime(全選凍結時間) 或當下的 difference[cite: 6]
             let lapDifference = customTime !== null ? customTime : difference; 
-            let now = Date.now();[cite: 6]
+            let now = Date.now();
             
-            // 防誤觸計算維持使用準備寫入的時間
-            if (student.lastLapTimeMs > 0 && (now - student.lastLapTimeMs) < 15000) {[cite: 6]
+            if (student.lastLapTimeMs > 0 && (now - student.lastLapTimeMs) < 15000) {
                 let splitSecs = ((lapDifference - student.lastLapTimeDifference) / 1000).toFixed(2);
-                let confirmLap = confirm(`【防誤觸警告】\n${student.name} 距離上次紀錄不到 15 秒！\n(目前單圈時間：${splitSecs} 秒)\n\n確定要記錄這圈嗎？`);[cite: 6]
-                if(!confirmLap) return;[cite: 6]
+                let confirmLap = confirm(`【防誤觸警告】\n${student.name} 距離上次紀錄不到 15 秒！\n(目前單圈時間：${splitSecs} 秒)\n\n確定要記錄這圈嗎？`);
+                if(!confirmLap) return;
             }
 
-            student.currentLap++;[cite: 6]
+            student.currentLap++;
             
             let splitTimeMs = lapDifference - student.lastLapTimeDifference;
             let splitTimeStr = formatTime(splitTimeMs);
             
-            student.lapTimes.push(formatTime(lapDifference));[cite: 6]
-            student.lapSplitTimes.push(splitTimeStr);[cite: 6]
+            student.lapTimes.push(formatTime(lapDifference));
+            student.lapSplitTimes.push(splitTimeStr);
             
-            student.lastLapTimeMs = now;[cite: 6]
+            student.lastLapTimeMs = now;
             student.lastLapTimeDifference = lapDifference;
             
-            sortGrid();[cite: 6]
+            sortGrid();
 
-            if (student.timeoutId) clearTimeout(student.timeoutId);[cite: 6]
+            if (student.timeoutId) clearTimeout(student.timeoutId);
             
-            btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;[cite: 6]
+            btnElement.innerHTML = `${student.name} <br><span style="color:#FFD700; font-weight:bold; font-size:1.05rem;">第 ${student.currentLap} 圈: ${splitTimeStr}</span>`;
             
-            if (student.currentLap === targetLaps - 1) {[cite: 6]
-                btnElement.classList.add('last-lap');[cite: 6]
-            } else if (student.currentLap === targetLaps) {[cite: 6]
-                btnElement.classList.remove('last-lap');[cite: 6]
-                btnElement.classList.add('finished');[cite: 6]
+            if (student.currentLap === targetLaps - 1) {
+                btnElement.classList.add('last-lap');
+            } else if (student.currentLap === targetLaps) {
+                btnElement.classList.remove('last-lap');
+                btnElement.classList.add('finished');
             }
 
-            student.timeoutId = setTimeout(() => {[cite: 6]
-                if (student.currentLap === targetLaps) {[cite: 6]
-                    let finalTime = student.lapTimes[student.lapTimes.length - 1];[cite: 6]
-                    btnElement.innerHTML = `${student.name} <br><span>完賽: ${finalTime}</span>`;[cite: 6]
+            student.timeoutId = setTimeout(() => {
+                if (student.currentLap === targetLaps) {
+                    let finalTime = student.lapTimes[student.lapTimes.length - 1];
+                    btnElement.innerHTML = `${student.name} <br><span>完賽: ${finalTime}</span>`;
                 } else {
-                    btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;[cite: 6]
+                    btnElement.innerHTML = `${student.name} <br><span>(${student.currentLap}/${targetLaps})</span>`;
                 }
-            }, 2500);[cite: 6]
+            }, 2500);
         }
 
         // --- 匯出檔案邏輯 ---
@@ -744,7 +735,6 @@
                 btnZero.style.display = "inline-block";
                 btnPause.innerText = "暫停";
                 
-                // 測驗開始，顯示批次操作列
                 document.getElementById('batch-control-bar').style.display = "flex";
 
                 if (mediaRecorder && mediaRecorder.state === 'inactive') {
@@ -765,7 +755,7 @@
                 timeSaved = difference;
                 btnPause.innerText = "繼續";
                 
-                cancelBatch(); // 暫停時取消選取狀態
+                cancelBatch(); 
 
                 if (mediaRecorder && mediaRecorder.state === 'recording') {
                     mediaRecorder.pause();
@@ -782,7 +772,7 @@
                 isRunning = false;
                 hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
-                cancelBatch(); // 歸零時取消選取狀態
+                cancelBatch(); 
                 
                 startTime = Date.now();
                 timeSaved = 0;
@@ -805,7 +795,7 @@
                 btnStart.innerText = "開始測驗 (Go)";
                 btnStart.style.backgroundColor = "#4CAF50";
                 btnStart.onclick = startTimer; 
-                document.getElementById('batch-control-bar').style.display = "none"; // 隱藏批次操作列
+                document.getElementById('batch-control-bar').style.display = "none"; 
 
                 if (document.getElementById('chk-sound-start').checked) {
                     stopSoundDetection();
@@ -822,10 +812,10 @@
                 hasStarted = false;
                 cancelAnimationFrame(timerAnimationId);
                 stopSoundDetection();
-                cancelBatch(); // 結束時取消選取狀態
+                cancelBatch(); 
                 
                 debugText.innerText = "測驗已結束";
-                document.getElementById('batch-control-bar').style.display = "none"; // 隱藏批次操作列
+                document.getElementById('batch-control-bar').style.display = "none"; 
                 
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                     mediaRecorder.stop();
@@ -847,7 +837,7 @@
                 hasStarted = false; 
                 cancelAnimationFrame(timerAnimationId);
                 stopSoundDetection(); 
-                cancelBatch(); // 重置時取消選取狀態
+                cancelBatch(); 
 
                 timeSaved = 0;
                 difference = 0;
@@ -861,7 +851,7 @@
                 document.getElementById('download-section').style.display = "none";
                 document.getElementById('btn-dl-video').style.display = 'block'; 
                 recordingIndicator.style.display = "none";
-                document.getElementById('batch-control-bar').style.display = "none"; // 隱藏批次操作列
+                document.getElementById('batch-control-bar').style.display = "none"; 
 
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                     let tempOnStop = mediaRecorder.onstop;
