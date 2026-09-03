@@ -133,7 +133,7 @@
 
         <!-- 批次操作控制列 -->
         <div id="batch-control-bar">
-            <div id="batch-instruction">👥 應付多人同時過線<br><span style="font-size:0.75rem; color:#666;">點擊右方全選，自動捕捉當下時間</span></div>
+            <div id="batch-instruction">👥 應付多人同時過線<br><span style="font-size:0.75rem; color:#666;">點選後可手動微調，點擊確定的「瞬間」才會擷取時間</span></div>
             <div>
                 <button id="btn-batch-cancel" style="display: none; background: #f44336; color: white; border: none; padding: 12px 15px; border-radius: 5px; font-weight: bold; margin-right: 5px; cursor: pointer;" onclick="cancelBatch()">取消</button>
                 <button id="btn-batch-action" style="background: #9C27B0; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);" onclick="handleBatchAction()">群體全選</button>
@@ -163,7 +163,6 @@
         // 批次操作變數
         let isBatchMode = false;
         let batchSelectedSet = new Set();
-        let batchCaptureTime = null;
 
         // --- 網頁載入：取得相機權限 ---
         window.addEventListener('load', async () => {
@@ -291,7 +290,7 @@
         }
 
         // ==========================================
-        // 批次操作邏輯 (群體全選)
+        // 批次操作邏輯 (群體全選與智能排除)
         // ==========================================
         function handleBatchAction() {
             if (!isRunning) { alert("請先開始測驗計時！"); return; }
@@ -301,24 +300,54 @@
             const instruction = document.getElementById('batch-instruction');
 
             if (!isBatchMode) {
+                // 1. 進入全選模式：準備選取，但不記錄時間
                 isBatchMode = true;
-                batchCaptureTime = difference; 
                 batchSelectedSet.clear();
 
+                let now = Date.now();
+                let cooldownMs = 20000; // 智能防護：20秒內剛被點選過的人，不會被自動納入
+
+                // 尋找主集團所在的圈數 (Mode Lap)
+                let lapCounts = {};
+                students.forEach(s => {
+                    if (s.currentLap < targetLaps) {
+                        lapCounts[s.currentLap] = (lapCounts[s.currentLap] || 0) + 1;
+                    }
+                });
+                let modeLap = -1;
+                let maxCount = -1;
+                for (let lap in lapCounts) {
+                    if (lapCounts[lap] > maxCount) {
+                        maxCount = lapCounts[lap];
+                        modeLap = parseInt(lap);
+                    }
+                }
+
+                // 進行篩選與全選
                 students.forEach((s, idx) => {
                     if (s.currentLap < targetLaps) {
-                        batchSelectedSet.add(idx);
-                        let btn = document.getElementById(`student-btn-${idx}`);
-                        if(btn) btn.classList.add('batch-selected');
+                        // 排除條件 A: 最近 20 秒內已經被點選過 (剛通過終點的領先者)
+                        let isRecentlyClicked = (s.lastLapTimeMs > 0 && (now - s.lastLapTimeMs) < cooldownMs);
+                        // 排除條件 B: 該名學生的進度「超越」了大多數人的主集團
+                        let isAheadOfPack = (s.currentLap > modeLap);
+                        
+                        // 只有未被排除的人，才會被自動全選
+                        if (!isRecentlyClicked && !isAheadOfPack) {
+                            batchSelectedSet.add(idx);
+                            let btn = document.getElementById(`student-btn-${idx}`);
+                            if(btn) btn.classList.add('batch-selected');
+                        }
                     }
                 });
 
+                // 更新 UI，提示老師準備點擊確認
                 btnAction.innerText = "✔️ 確定寫入成績";
                 btnAction.style.background = "#4CAF50";
                 btnCancel.style.display = "inline-block";
-                instruction.innerHTML = `已擷取成績時間 <span style="color:#E65100; font-size:1.1rem;">${formatTime(batchCaptureTime)}</span><br><span style="font-size:0.8rem; color:#666;">點擊名牌可「取消」未經過的落後學生</span>`;
+                instruction.innerHTML = `已開啟群體選取<br><span style="font-size:0.8rem; color:#E65100; font-weight:bold;">請取消勾選落後者，點擊「確定」的瞬間即為成績</span>`;
             } else {
-                let timeToApply = batchCaptureTime;
+                // 2. 確定寫入成績：精準擷取「按下確定這一瞬間」的時間
+                let timeToApply = difference; 
                 let targets = Array.from(batchSelectedSet); 
 
                 cancelBatch(); 
@@ -332,13 +361,12 @@
 
         function cancelBatch() {
             isBatchMode = false;
-            batchCaptureTime = null;
             batchSelectedSet.clear();
 
             document.getElementById('btn-batch-action').innerText = "群體全選";
             document.getElementById('btn-batch-action').style.background = "#9C27B0";
             document.getElementById('btn-batch-cancel').style.display = "none";
-            document.getElementById('batch-instruction').innerHTML = "👥 應付多人同時過線<br><span style='font-size:0.75rem; color:#666;'>點擊右方全選，自動捕捉當下時間</span>";
+            document.getElementById('batch-instruction').innerHTML = "👥 應付多人同時過線<br><span style='font-size:0.75rem; color:#666;'>點選後可手動微調，點擊確定的「瞬間」才會擷取時間</span>";
 
             document.querySelectorAll('.student-btn').forEach(btn => {
                 btn.classList.remove('batch-selected');
